@@ -1,0 +1,241 @@
+---
+title: "Explore number of variants per locus"
+author: "Jelmer Poelstra"
+date: today
+format:
+  html:
+    self-contained: true
+    cache: false
+    number-sections: true
+    number-depth: 2
+    toc: true
+    fig-dpi: 300
+    df-print: kable
+    grid:
+      body-width: 800px
+knitr:
+  opts_chunk:
+    message: FALSE
+    out.width: "85%"
+    R.options: 
+      knitr.table.html.attr: "quarto-disable-processing=true"
+execute: 
+  warning: false
+editor_options: 
+  chunk_output_type: console
+---
+
+<br>
+
+-------
+
+```{r}
+# --- Setup
+# Load packages
+library(tidyverse)
+library(here)
+
+# Settings
+theme_set(theme_bw(base_size = 14))
+theme_update(
+  plot.title = element_text(face = "bold", hjust = 0.5),
+  panel.grid.minor = element_blank(),
+  panel.grid.major.x = element_blank()
+)
+
+# Define the input files
+var_dir <- here("results/geno/consensus_stats")
+het_files <- list.files(var_dir, full.names = TRUE, pattern = ".*_het_per-locus.txt")
+alt_files <- list.files(var_dir, full.names = TRUE, pattern = ".*_hom-alt_per-locus.txt")
+ref_files <- list.files(var_dir, full.names = TRUE, pattern = ".*_hom-ref_per-locus.txt")
+meta_file <- here("data/meta/anchor_all_locations.csv")
+
+# Define the output files
+only_in_meta_file <- here("sandbox/only-in-meta.txt")
+only_seqs_file <- here("sandbox/only-in-seqs.txt")
+```
+
+```{r}
+# --- Read and process the input files
+# Sample metadata
+meta <- read_csv(meta_file, show_col_types = FALSE) |>
+  select(sample = code, species, locality, state, mainland_island = type) |>
+  mutate(species = sub("_", ". ", species))
+
+# Heterozygous site counts
+het <- read_tsv(
+  het_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_het"),
+  id = "sample"
+) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/(.*)_het_per.*", "\\1", sample)
+  )
+
+# Homozygous non-ref (alt) site counts
+alt <- read_tsv(
+  alt_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_alt"),
+  id = "sample"
+  ) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/(.*)_hom-alt_per.*", "\\1", sample)
+  )
+
+# Homozygous non-ref (alt) site counts
+ref <- read_tsv(
+  ref_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_ref"),
+  id = "sample"
+  ) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/(.*)_hom-ref_per.*", "\\1", sample)
+  )
+
+# Combine
+all_init <- full_join(het, alt, by = c("sample", "locus")) |>
+  full_join(ref, by = c("sample", "locus")) |>
+  mutate(
+    sample = sub("P0021_FG_", "", sample),
+    n_called = n_het + n_alt + n_ref
+  )
+```
+
+## Check metadata
+
+- Missing samples in metadata or FASTQ:
+
+```{r}
+only_in_meta <- meta$sample[!meta$sample %in% unique(all_init$sample)]
+only_in_meta
+writeLines(only_in_meta, only_in_meta_file)
+
+only_seqs <- unique(all_init$sample)[!unique(all_init$sample) %in% meta$sample]
+only_seqs
+writeLines(only_seqs, only_seqs_file)
+```
+
+```{r}
+meta |> count(mainland_island)
+meta |> count(species)
+meta |> count(state)
+
+meta |> count(species, mainland_island)
+meta |> count(species, state)
+
+meta |> filter(species == "B. jararaca", mainland_island == "island")
+#I1773  B. jararaca Ilha da Moela SP    island  => DIFFERENT SPECIES: B. germanoi
+```
+
+## Number of non-called loci
+
+```{r}
+# TODO: CHECK AND EXCLUDE LOCI WITH TOO FEW BASES CALLED
+all_init |> filter(n_called == 0) |> count(sample) |> head()
+all_init |> filter(n_called == 0) |> count(locus) |> head()
+
+#TODO: EXCLUDE INDIVIDUALS AS WELL
+#TODO: CHECK DEPTH
+```
+
+```{r}
+# Remove sample-loci with fewer than 50 called bases
+# and compute nr per 100 bp
+all <- all_init |>
+  filter(n_called > 50) |>
+  select(!n_ref) |> 
+  mutate(n_diff = n_alt + (n_het / 2)) |> 
+  pivot_longer(cols = c(n_het, n_alt, n_diff), names_to = "type", values_to = "count") |>
+  mutate(count = (count / n_called) * 100)
+
+# Means by sample
+all_smp <- all |>
+  summarize(count = mean(count), .by = c("sample", "type")) |>
+  left_join(meta, by = "sample") |>
+  drop_na()
+
+# Means by locus
+all_loc <- all |> summarize(count = mean(count), .by = c("locus", "type"))
+```
+
+## By-sample plots
+
+```{r}
+all_smp |>
+  filter(type == "n_alt") |> 
+  ggplot(aes(x = species, fill = species, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  labs(
+    title = "Homozygous non-ref sites",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+    ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
+
+all_smp |>
+  filter(type == "n_het") |> 
+  ggplot(aes(x = species, fill = species, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  labs(
+    title = "Heterozygous sites",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+    ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
+
+all_smp |>
+  filter(type == "n_diff") |> 
+  ggplot(aes(x = species, fill = species, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  labs(
+    title = "Total nr. of differences from the reference",
+    x = NULL,
+    y = "Number per 100 bp"
+    ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
+```
+
+```{r}
+# jararaca mainland vs island
+all_smp |>
+  filter(species == "B. jararaca", type != "n_diff") |>
+  ggplot(aes(x = mainland_island, fill = mainland_island, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  facet_wrap(vars(type)) +
+  labs(
+    title = "jararaca island vs. mainland",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+    ) +
+  guides(fill = "none")
+
+# jararaca by state
+all_smp |>
+  filter(species == "B. jararaca", type != "n_diff") |>
+  ggplot(aes(x = state, fill = state, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  facet_wrap(vars(type)) +
+  labs(
+    title = "jararaca island vs. mainland",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+    ) +
+  guides(fill = "none")
+```

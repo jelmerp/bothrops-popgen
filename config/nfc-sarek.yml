@@ -1,0 +1,31 @@
+# Parameter file for the Nextflow/nf-core ampliseq pipeline (https://nf-co.re/ampliseq)
+
+# ==============================================================================
+#                           INPUTS AND OUTPUTS
+# ==============================================================================
+# Only use provided reference genome:
+igenomes_ignore: true
+
+# Outputs
+save_mapped: false
+# Saves output from mapping as BAM file instead of CRAM
+save_output_as_bam: true
+
+# Intervals BED file
+intervals: 'results/blast_probes/probes_1000bp-buffer.bed'
+
+# ==============================================================================
+#                             TOOL PARAMETERS
+# ==============================================================================
+# Remove adapters with FASTP
+trim_fastq: true
+
+# ==============================================================================
+#                         TOOLS TO RUN OR SKIP
+# ==============================================================================
+# Comma-separated list of one or more tools for variant calling and annotation
+# See https://nf-co.re/sarek/parameters#tools for options 
+tools: 'freebayes' #,haplotypecaller
+
+# Comma-separated list of one or more tools for variant calling and annotation
+skip_tools: 'baserecalibrator'

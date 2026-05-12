@@ -1,0 +1,3 @@
+[submodule "mcic-scripts"]
+	path = mcic-scripts
+	url = https://github.com/mcic-osu/mcic-scripts.git

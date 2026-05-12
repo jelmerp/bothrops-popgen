@@ -1,0 +1,213 @@
+---
+title: "Explore number of variants per locus"
+author: "Jelmer Poelstra"
+date: today
+format:
+  html:
+    self-contained: true
+    cache: false
+    number-sections: true
+    number-depth: 2
+    toc: true
+    fig-dpi: 300
+    df-print: kable
+    grid:
+      body-width: 800px
+knitr:
+  opts_chunk:
+    message: FALSE
+    out.width: "85%"
+    R.options: 
+      knitr.table.html.attr: "quarto-disable-processing=true"
+execute: 
+  warning: false
+editor_options: 
+  chunk_output_type: console
+---
+
+<br>
+
+-------
+
+```{r}
+# --- Setup
+# Load packages
+library(tidyverse)
+library(ggridges)
+library(here)
+
+# Settings
+cols_dp <- c("chr", "start", "end", "locus", "nvar", "sample")
+theme_set(theme_bw(base_size = 14))
+theme_update(
+  plot.title = element_text(face = "bold", hjust = 0.5),
+  panel.grid.minor = element_blank(),
+  panel.grid.major.x = element_blank()
+)
+
+# Define the input files
+var_file_dir <- here("results/geno/consensus")
+var_files <- list.files(var_file_dir, full.names = TRUE, pattern = ".*-per-region.txt")
+meta_file <- here("data/meta/anchor_all_locations.csv")
+locus_meta_file <- here("results/blast_probes/probe_lengths.txt")
+```
+
+```{r}
+# --- Read and process the input files
+
+# Sample metadata
+meta <- read_csv(meta_file, show_col_types = FALSE) |>
+  select(sample = code, species, locality, state, type) |>
+  mutate(species = sub("_", ". ", species))
+
+# Locus metadata
+locus_meta <- read_tsv(locus_meta_file, col_names = c("locus", "length"), col_types = "ci") |>
+  mutate(locus = sub("Bothrops_I9999_", "", locus))
+
+# Files with variant counts per locus
+var <- read_tsv(
+  var_files,
+  col_names = cols_dp,
+  col_types = "ciicic",
+  col_select = c(4, 6, 5),
+  ) |>
+  mutate(
+    sample = sub("P0021_FG_", "", sample),
+    locus = sub("Bothrops_I9999_", "", locus)
+  ) |>
+  left_join(meta, by = "sample") |>
+  left_join(locus_meta, by = "locus")
+```
+
+```{r}
+# Means by sample
+var_smp <- var |>
+  mutate(nvar_100bp = (nvar / length) * 100) |>
+  summarize(nvar_100bp = mean(nvar_100bp), .by = sample) |>
+  left_join(meta, by = "sample") |>
+  drop_na()
+
+# Means by locus (for jararaca only)
+var_loc <- var |>
+  filter(species == "B. jararaca") |> 
+  summarize(nvar = mean(nvar), .by = "locus") |>
+  left_join(locus_meta, by = "locus") |>
+  mutate(nvar_100bp = (nvar / length) * 100)
+```
+
+## Check metadata
+
+- Missing samples in metadata or FASTQ:
+
+```{r}
+meta$sample[!meta$sample %in% unique(var$sample)]
+#> "SB0825" "SB0101" "SB0020" "SB0032" "SB0090" "SB1543"
+
+unique(var$sample)[!unique(var$sample) %in% meta$sample]
+# [1] "I12285" "I12286" "I12287" "I12296" "I1234"  "I1492"  "I1502"  "I1503"  "I1508"  "I1509"  "I1511"  "I1518"  "I1527"  "I1551"  "I1554"  "I1557" 
+#[17] "I1558"  "I1594"  "I1607"  "I1609"  "I1611"  "I1612"  "I1613"  "I1618"  "I1622"  "I1623"  "I1625"  "I1639"  "I1665"  "I1674"  "I1681"  "I1683" 
+#[33] "I1726"  "I1752"  "I1754"  "I1757"  "I1758"  "I1765"  "I1766"  "I1771"  "I1774"  "I1775"  "I1791"  "I1792"  "I1807"  "I18376" "I18377" "I18378"
+#[49] "I18395" "I18396" "I18405" "I18406"
+```
+
+```{r}
+meta |> count(type)
+meta |> count(species)
+meta |> count(state)
+
+meta |> count(species, type)
+meta |> count(species, state)
+```
+
+## By-sample plots
+
+```{r}
+var_smp |>
+  ggplot(aes(x = species, fill = species, y = nvar_100bp)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  scale_y_continuous(breaks = seq(0, 50, by = 1)) +
+  labs(x = NULL, y = "Number of SNPs per 100 bp") +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
+
+# SUSPICIOUS INSULARIS SAMPLE:
+var_smp |> filter(species == "B. insularis", nvar_100bp > 2) # I1684
+```
+
+```{r}
+# jararaca mainland vs island
+var_smp |>
+  filter(species == "B. jararaca") |>
+  ggplot(aes(x = type, fill = type, y = nvar_100bp)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  labs(x = NULL, y = "Number of SNPs per 100 bp") +
+  guides(fill = "none")
+
+# jararaca by state
+var_smp |>
+  filter(species == "B. jararaca") |>
+  ggplot(aes(x = state, fill = state, y = nvar_100bp)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
+  labs(x = "State", y = "Number of SNPs per 100 bp") +
+  guides(fill = "none")
+```
+
+## By-locus plots
+
+```{r}
+var_loc |>
+  ggplot(aes(x = nvar_100bp)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "grey40") +
+  scale_x_continuous(expand = expansion(mult = c(0, 0.03))) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.03))) +
+  labs(
+    x = "Number of SNPs per 100 bp",
+    y = "Number of loci",
+    title = "B. jararaca only", 
+  )
+
+var_loc |>
+  mutate(length_cat = ifelse(length < 250, "short", "long")) |>
+  ggplot(aes(x = length_cat, y = nvar_100bp)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.25, size = 2.5) +
+  labs(title = "B. jararaca only", y = "Number of SNPs per 100 bp")
+```
+
+- TODO: Check loci with >15 SNPs per 100 bp
+
+```{r}
+var_loc |> filter(nvar_100bp > 15)
+# locus  nvar length nvar_100bp
+# L1031  41.4    200       20.7
+# L690   34.1    200       17.0
+# L663   54.9    200       27.5
+```
+
+<br>
+
+## Individual-sample plots
+
+```{r}
+var |>
+  filter(sample %in% unique(var$sample)[1:25]) |> 
+  ggplot(aes(x = nvar, y = sample)) +
+  geom_boxplot() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL, x = "Number of SNPs")
+```
+
+```{r}
+var |>
+  filter(sample %in% unique(var$sample)[1:25]) |> 
+  ggplot(aes(x = nvar, y = sample)) +
+  geom_density_ridges() +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_x_continuous(limits = c(0, 20), expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  labs(y = NULL, x = "Number of SNPs") +
+  theme_ridges()
+```

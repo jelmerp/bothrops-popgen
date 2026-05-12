@@ -1,0 +1,217 @@
+---
+title: "Explore probe sequence BLAST results"
+author: "Jelmer Poelstra"
+date: today
+format:
+  html:
+    self-contained: true
+    cache: false
+    number-sections: true
+    number-depth: 2
+    toc: true
+    fig-dpi: 300
+    df-print: kable
+    grid:
+      body-width: 800px
+knitr:
+  opts_chunk:
+    message: FALSE
+    out.width: "85%"
+    R.options: 
+      knitr.table.html.attr: "quarto-disable-processing=true"
+execute: 
+  warning: false
+editor_options: 
+  chunk_output_type: console
+---
+
+<br>
+
+-------
+
+```{r}
+# Load packages
+library(tidyverse)
+library(here)
+
+# Set plotting theme
+theme_set(theme_bw(base_size = 14))
+theme_update(panel.grid.minor = element_blank())
+
+# Define input files
+blast_file <- here("results/blast_probes/blast_out_final.tsv") 
+probe_lens_file <- here("results/blast_probes/probe_lengths.txt")
+
+# Define output files
+locus_bed_file <- here("results/blast_probes/probes.bed")
+```
+
+```{r}
+# Read input files
+blast <- read_tsv(blast_file, show_col_types = FALSE) |>
+  select(
+    q = qseqid, s = sacc, pident, len = length, qlen, qcov = qcovhsp,
+    chrom = sacc, start = sstart, end = send
+  )
+
+lens <- read_tsv(probe_lens_file, col_names = c("probe", "len"))
+```
+
+<br>
+
+## Best hit for each probe
+
+```{r}
+best_hits <- blast |> group_by(q) |> slice_head(n = 1)
+
+best_hits |>
+  ggplot(aes(x = pident, y = qcov)) +
+  geom_jitter(
+    shape = 21,
+    size = 2,
+    fill = "steelblue",
+    alpha = 0.5,
+    width = 0,
+    height = 0.25
+    ) +
+  scale_x_continuous(
+    labels = scales::label_percent(scale = 1),
+    expand = expansion(mult = c(0.01, 0.02))
+    ) +
+  scale_y_continuous(
+    labels = scales::label_percent(scale = 1),
+    expand = expansion(mult = c(0.01, 0.02))
+    ) +
+  labs(x = "Identity", y = "Query coverage")
+```
+
+- Number of probes with a hit (identity >= 90, coverage >= 80%):
+
+```{r}
+nrow(best_hits)
+```
+
+- Of these, number with a best hit with identity < 95%:
+
+```{r}
+best_hits |> filter(pident < 95) |> nrow()  # 18
+```
+
+- Of these, number with a best hit with query coverage < 90%:
+
+```{r}
+best_hits |> filter(qcov < 90) |> nrow()    # 16
+```
+
+- Remove hits with identity < 95% and/or coverage < 90%:
+
+```{r}
+blast_filt <- blast |>
+  group_by(q) |>
+  filter(any(pident >= 95)) |>
+  filter(any(qcov >= 90)) |>
+  ungroup()
+```
+
+<br>
+
+## Multi-hits
+
+```{r}
+multi_hits <- blast_filt |>
+  group_by(q) |>
+  add_count(name = "n_hits") |>
+  filter(n_hits > 1) |>
+  mutate(
+    id_drop = pident - lead(pident),
+    cov_drop = qcov - lead(qcov),
+  )
+```
+
+- Number of loci with multiple hits:
+
+```{r}
+length(unique(multi_hits$q)) # 83
+```
+
+```{r}
+#- Keep only those with a drop in percent ID of at least 5,
+#  and with percent ID of at least 95 and percent coverage of at least 90:
+
+#multi_hits_keep <- multi_hits |>
+#  slice_head(n = 1) |>
+#  filter(id_drop >= 5, pident >= 95, qcov >= 90) |>
+#  pull(q)
+
+#mutate(status = ifelse(q %in% multi_hits_keep, "keep", "remove")) |>
+```
+
+- For multi-hit probes, plot showing percent ID for each hit:
+
+```{r}
+multi_hits |>
+  ungroup() |>
+  arrange(desc(pident)) |>
+  mutate(q = fct_inorder(q)) |>
+  ggplot(aes(x = q, y = pident)) +
+  geom_line(color = "grey30") +
+  geom_point(shape = 21, size = 2.5, fill = "red") +
+  scale_y_continuous(
+    labels = scales::label_percent(scale = 1),
+    expand = expansion(mult = c(0.01, 0.02))
+    ) +
+  labs(x = "Query", y = "Percent identity") +
+  theme(
+    axis.text.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    legend.position = "top"
+  )
+```
+
+- Remove multi-hit probes:
+
+```{r}
+blast_filt2 <- blast_filt |>
+  filter(!q %in% unique(multi_hits$q)) |>
+  group_by(q) |>
+  slice_head(n = 1) |>
+  ungroup()
+```
+
+- Create BED files:
+
+```{r}
+locus_bed <- blast_filt2 |>
+  mutate(
+    start_final = ifelse(start < end, start, end) - 1,
+    end_final = ifelse(start < end, end, start)
+  ) |>
+  select(chrom, start = start_final, end = end_final, probe = q)
+  #mutate(start = start - 1, score = 0, strand = ".") |>
+  #select(chrom, start, end, probe = q, score, strand)
+
+#locus_bed_buffer <- locus_bed |>
+  
+write_tsv(locus_bed, locus_bed_file, col_names = FALSE)
+```
+
+- Number of loci left:
+
+```{r}
+nrow(blast_filt2)
+```
+
+<br>
+
+## Probe lengths
+
+```{r}
+ggplot(lens, aes(x = len)) +
+  geom_histogram() +
+  scale_y_continuous(
+    expand = expansion(mult = c(0, 0.02)),
+    labels = scales::comma
+    ) +
+  scale_x_continuous(labels = scales::comma) +
+  labs(x = "Probe length (bp)")
+```

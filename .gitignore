@@ -1,0 +1,7 @@
+data/
+results/
+sandbox/
+software/
+slurm-*
+.nextflow*
+.Rproj.user/
