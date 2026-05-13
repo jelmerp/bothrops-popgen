@@ -50,8 +50,9 @@ meta1_file <- here("metadata/complete_list_Anchored_JP.xlsx")
 meta2_file <- here("metadata/anchor_all_locations.csv")
 
 # Other
-missingness_file <- here("results/geno/stats/locus_filtering/per_sample_locus_missingness_filtered.tsv")
-vcf_dir <- here("results/geno/stats/vcf")
+missingness_file <- here("results/geno/consensus/stats/locus_filtering/per_sample_locus_missingness_filtered.tsv")
+locus_length_file <- here("results/geno/consensus/stats/locus_lengths.tsv")
+vcf_dir <- here("results/geno/consensus/stats/vcf")
 
 # VCF depth
 depth_files <- list.files(
@@ -88,6 +89,11 @@ meta1 <- read_excel(meta1_file) |>
 meta2 <- read_csv(meta2_file, show_col_types = FALSE) |>
   select(sample = code, land_type = type)
 meta <- left_join(meta1, meta2, by = "sample")
+
+# Locus lengths
+locus_lengths <- read_tsv(locus_length_file, col_types = "ci") |>
+    rename(locus = locus_id) |>
+    mutate(locus = sub(".*_(L[0-9]+)_.*", "\\1", locus))
 
 # Missingness per sample
 missingness <- read_tsv(missingness_file, col_types = "ccd") |>
@@ -145,7 +151,8 @@ all_init <- full_join(het, alt, by = c("sample", "locus")) |>
   mutate(
     sample = sub("P0021_FG_", "", sample),
     n_called = n_het + n_alt + n_ref
-  )
+  ) |>
+  left_join(locus_lengths, by = "locus")
 ```
 
 ## Check metadata
@@ -154,6 +161,7 @@ all_init <- full_join(het, alt, by = c("sample", "locus")) |>
 meta |> count(land_type)
 meta |> count(species)
 meta |> count(state)
+
 
 meta |> count(species, land_type)
 meta |> count(species, state)
