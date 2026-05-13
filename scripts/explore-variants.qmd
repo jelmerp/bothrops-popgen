@@ -33,11 +33,10 @@ editor_options:
 # --- Setup
 # Load packages
 library(tidyverse)
-library(ggridges)
 library(here)
+library(readxl)
 
 # Settings
-cols_dp <- c("chr", "start", "end", "locus", "nvar", "sample")
 theme_set(theme_bw(base_size = 14))
 theme_update(
   plot.title = element_text(face = "bold", hjust = 0.5),
@@ -45,169 +44,308 @@ theme_update(
   panel.grid.major.x = element_blank()
 )
 
-# Define the input files
-var_file_dir <- here("results/geno/consensus")
-var_files <- list.files(var_file_dir, full.names = TRUE, pattern = ".*-per-region.txt")
-meta_file <- here("data/meta/anchor_all_locations.csv")
-locus_meta_file <- here("results/blast_probes/probe_lengths.txt")
+# --- Define input files
+# Metadata
+meta1_file <- here("metadata/complete_list_Anchored_JP.xlsx")
+meta2_file <- here("metadata/anchor_all_locations.csv")
+
+# Other
+missingness_file <- here("results/geno/stats/locus_filtering/per_sample_locus_missingness_filtered.tsv")
+vcf_dir <- here("results/geno/stats/vcf")
+
+# VCF depth
+depth_files <- list.files(
+  vcf_dir,
+  full.names = TRUE,
+  pattern = ".*_depth.tsv"
+)
+
+# VCF-derived files with counts of heterozygous, homozygous non-ref (alt),
+# and homozygous reference (ref) sites per locus
+het_files <- list.files(
+  vcf_dir,
+  full.names = TRUE,
+  pattern = ".*_het_per-locus.txt"
+)
+alt_files <- list.files(
+  vcf_dir,
+  full.names = TRUE,
+  pattern = ".*_hom-alt_per-locus.txt"
+)
+ref_files <- list.files(
+  vcf_dir,
+  full.names = TRUE,
+  pattern = ".*_hom-ref_per-locus.txt"
+)
 ```
 
 ```{r}
 # --- Read and process the input files
-
 # Sample metadata
-meta <- read_csv(meta_file, show_col_types = FALSE) |>
-  select(sample = code, species, locality, state, type) |>
+meta1 <- read_excel(meta1_file) |>
+  select(sample = code, species, locality, state, contam) |>
   mutate(species = sub("_", ". ", species))
+meta2 <- read_csv(meta2_file, show_col_types = FALSE) |>
+  select(sample = code, land_type = type)
+meta <- left_join(meta1, meta2, by = "sample")
 
-# Locus metadata
-locus_meta <- read_tsv(locus_meta_file, col_names = c("locus", "length"), col_types = "ci") |>
-  mutate(locus = sub("Bothrops_I9999_", "", locus))
+# Missingness per sample
+missingness <- read_tsv(missingness_file, col_types = "ccd") |>
+    mutate(
+        sample = sub(".*_FG_", "", sample),
+        locus = sub("Bothrops_I9999_", "", locus)
+    )
 
-# Files with variant counts per locus
-var <- read_tsv(
-  var_files,
-  col_names = cols_dp,
-  col_types = "ciicic",
-  col_select = c(4, 6, 5),
-  ) |>
+# Depth of coverage
+depth <- read_tsv(depth_files, col_names = c("sample", "dp"), col_types = "cd") |>
+    mutate(sample = sub(".*_FG_", "", sample))
+
+# Heterozygous site counts
+het <- read_tsv(
+  het_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_het"),
+  id = "sample"
+) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/.*FG_(.*)_het_per.*", "\\1", sample)
+  )
+
+# Homozygous non-ref (alt) site counts
+alt <- read_tsv(
+  alt_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_alt"),
+  id = "sample"
+) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/.*FG_(.*)_hom-alt_per.*", "\\1", sample)
+  )
+
+# Homozygous reference (ref) site counts
+ref <- read_tsv(
+  ref_files,
+  col_select = 4:5,
+  col_types = "ciici",
+  col_names = c("chr", "start", "end", "locus", "n_ref"),
+  id = "sample"
+) |>
+  mutate(
+    locus = sub("Bothrops_I9999_", "", locus),
+    sample = sub(".*/.*FG_(.*)_hom-ref_per.*", "\\1", sample)
+  )
+
+# Combine
+all_init <- full_join(het, alt, by = c("sample", "locus")) |>
+  full_join(ref, by = c("sample", "locus")) |>
   mutate(
     sample = sub("P0021_FG_", "", sample),
-    locus = sub("Bothrops_I9999_", "", locus)
-  ) |>
-  left_join(meta, by = "sample") |>
-  left_join(locus_meta, by = "locus")
-```
-
-```{r}
-# Means by sample
-var_smp <- var |>
-  mutate(nvar_100bp = (nvar / length) * 100) |>
-  summarize(nvar_100bp = mean(nvar_100bp), .by = sample) |>
-  left_join(meta, by = "sample") |>
-  drop_na()
-
-# Means by locus (for jararaca only)
-var_loc <- var |>
-  filter(species == "B. jararaca") |> 
-  summarize(nvar = mean(nvar), .by = "locus") |>
-  left_join(locus_meta, by = "locus") |>
-  mutate(nvar_100bp = (nvar / length) * 100)
+    n_called = n_het + n_alt + n_ref
+  )
 ```
 
 ## Check metadata
 
-- Missing samples in metadata or FASTQ:
-
 ```{r}
-meta$sample[!meta$sample %in% unique(var$sample)]
-#> "SB0825" "SB0101" "SB0020" "SB0032" "SB0090" "SB1543"
-
-unique(var$sample)[!unique(var$sample) %in% meta$sample]
-# [1] "I12285" "I12286" "I12287" "I12296" "I1234"  "I1492"  "I1502"  "I1503"  "I1508"  "I1509"  "I1511"  "I1518"  "I1527"  "I1551"  "I1554"  "I1557" 
-#[17] "I1558"  "I1594"  "I1607"  "I1609"  "I1611"  "I1612"  "I1613"  "I1618"  "I1622"  "I1623"  "I1625"  "I1639"  "I1665"  "I1674"  "I1681"  "I1683" 
-#[33] "I1726"  "I1752"  "I1754"  "I1757"  "I1758"  "I1765"  "I1766"  "I1771"  "I1774"  "I1775"  "I1791"  "I1792"  "I1807"  "I18376" "I18377" "I18378"
-#[49] "I18395" "I18396" "I18405" "I18406"
-```
-
-```{r}
-meta |> count(type)
+meta |> count(land_type)
 meta |> count(species)
 meta |> count(state)
 
-meta |> count(species, type)
+meta |> count(species, land_type)
 meta |> count(species, state)
 ```
 
-## By-sample plots
+## Number of non-called loci
 
 ```{r}
-var_smp |>
-  ggplot(aes(x = species, fill = species, y = nvar_100bp)) +
+# TODO: CHECK AND EXCLUDE LOCI WITH TOO FEW BASES CALLED
+all_init |> filter(n_called == 0) |> count(sample) |> head()
+all_init |> filter(n_called == 0) |> count(locus) |> head()
+```
+
+```{r}
+# Remove sample-loci with fewer than 50 called bases
+# and compute nr per 100 bp
+all <- all_init |>
+  filter(n_called > 50) |>
+  select(!n_ref) |>
+  mutate(n_diff = n_alt + (n_het / 2)) |>
+  pivot_longer(
+    cols = c(n_het, n_alt, n_diff),
+    names_to = "genotype",
+    values_to = "count"
+  ) |>
+  mutate(count = (count / n_called) * 100)
+
+# Means by sample
+all_smp <- all |>
+  summarize(count = mean(count), .by = c("sample", "genotype")) |>
+  left_join(meta, by = "sample") |>
+  drop_na()
+
+# Means by locus
+all_loc <- all |> summarize(count = mean(count), .by = c("locus", "genotype"))
+```
+
+## Genotype count plots
+
+### By species
+
+```{r}
+# Homozygous non-ref sites
+all_smp |>
+  filter(genotype == "n_alt") |>
+  ggplot(aes(x = species, fill = species, y = count)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
-  scale_y_continuous(breaks = seq(0, 50, by = 1)) +
-  labs(x = NULL, y = "Number of SNPs per 100 bp") +
+  geom_jitter(
+    width = 0.2,
+    fill = "grey40",
+    shape = 21,
+    alpha = 0.5,
+    size = 2.5
+  ) +
+  labs(
+    title = "Homozygous non-ref sites",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+  ) +
   guides(fill = "none") +
   theme(axis.text.x = element_text(face = "italic"))
 
-# SUSPICIOUS INSULARIS SAMPLE:
-var_smp |> filter(species == "B. insularis", nvar_100bp > 2) # I1684
+# Heterozygous sites
+all_smp |>
+  filter(type == "n_het") |>
+  ggplot(aes(x = species, fill = species, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    width = 0.2,
+    fill = "grey40",
+    shape = 21,
+    alpha = 0.5,
+    size = 2.5
+  ) +
+  labs(
+    title = "Heterozygous sites",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+  ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
+
+# Total nr. of differences from the reference
+all_smp |>
+  filter(type == "n_diff") |>
+  ggplot(aes(x = species, fill = species, y = count)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    width = 0.2,
+    fill = "grey40",
+    shape = 21,
+    alpha = 0.5,
+    size = 2.5
+  ) +
+  labs(
+    title = "Total nr. of differences from the reference",
+    x = NULL,
+    y = "Number per 100 bp"
+  ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(face = "italic"))
 ```
+
+### *jararaca* mainland vs island
 
 ```{r}
 # jararaca mainland vs island
-var_smp |>
-  filter(species == "B. jararaca") |>
-  ggplot(aes(x = type, fill = type, y = nvar_100bp)) +
+all_smp |>
+  filter(species == "jararaca", genotype != "n_diff") |>
+  ggplot(aes(x = land_type, fill = land_type, y = count)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
-  labs(x = NULL, y = "Number of SNPs per 100 bp") +
+  geom_jitter(
+    width = 0.2,
+    fill = "grey40",
+    shape = 21,
+    alpha = 0.5,
+    size = 2.5
+  ) +
+  facet_wrap(vars(genotype)) +
+  labs(
+    title = "jararaca island vs. mainland",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+  ) +
   guides(fill = "none")
 
 # jararaca by state
-var_smp |>
-  filter(species == "B. jararaca") |>
-  ggplot(aes(x = state, fill = state, y = nvar_100bp)) +
+all_smp |>
+  filter(species == "jararaca", genotype != "n_diff") |>
+  ggplot(aes(x = state, fill = state, y = count)) +
   geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.5, size = 2.5) +
-  labs(x = "State", y = "Number of SNPs per 100 bp") +
+  geom_jitter(
+    width = 0.2,
+    fill = "grey40",
+    shape = 21,
+    alpha = 0.5,
+    size = 2.5
+  ) +
+  facet_wrap(vars(genotype)) +
+  labs(
+    title = "jararaca island vs. mainland",
+    x = NULL,
+    y = "Number of sites per 100 bp"
+  ) +
   guides(fill = "none")
 ```
 
-## By-locus plots
+### Contaminated vs. non-contaminated samples
 
 ```{r}
-var_loc |>
-  ggplot(aes(x = nvar_100bp)) +
-  geom_histogram(binwidth = 1, fill = "steelblue", color = "grey40") +
-  scale_x_continuous(expand = expansion(mult = c(0, 0.03))) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.03))) +
+all_smp |> count(contam, species)
+```
+
+
+## Depth of coverage plots
+
+```{r}
+depth |>
+  ggplot(aes(x = dp)) +
+  geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
   labs(
-    x = "Number of SNPs per 100 bp",
-    y = "Number of loci",
-    title = "B. jararaca only", 
-  )
-
-var_loc |>
-  mutate(length_cat = ifelse(length < 250, "short", "long")) |>
-  ggplot(aes(x = length_cat, y = nvar_100bp)) +
-  geom_boxplot(outlier.shape = NA) +
-  geom_jitter(width = 0.2, fill = "grey40", shape = 21, alpha = 0.25, size = 2.5) +
-  labs(title = "B. jararaca only", y = "Number of SNPs per 100 bp")
+    title = "Mean depth of coverage across all samples",
+    x = "Mean depth of coverage",
+    y = "Frequency"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
 ```
 
-- TODO: Check loci with >15 SNPs per 100 bp
+## Missingness (`N`) plots
 
 ```{r}
-var_loc |> filter(nvar_100bp > 15)
-# locus  nvar length nvar_100bp
-# L1031  41.4    200       20.7
-# L690   34.1    200       17.0
-# L663   54.9    200       27.5
-```
+# By locus
+missingness |>
+    summarize(pct_N = mean(pct_N), .by = locus) |>
+    ggplot(aes(x = pct_N)) +
+    geom_histogram(binwidth = 1, fill = "steelblue", color = "black") +
+    labs(
+      title = "Mean missingness per locus",
+      x = "Mean percentage of missing data (N)",
+      y = "Frequency"
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
 
-<br>
-
-## Individual-sample plots
-
-```{r}
-var |>
-  filter(sample %in% unique(var$sample)[1:25]) |> 
-  ggplot(aes(x = nvar, y = sample)) +
-  geom_boxplot() +
-  scale_x_continuous(expand = c(0, 0)) +
-  labs(y = NULL, x = "Number of SNPs")
-```
-
-```{r}
-var |>
-  filter(sample %in% unique(var$sample)[1:25]) |> 
-  ggplot(aes(x = nvar, y = sample)) +
-  geom_density_ridges() +
-  scale_y_discrete(expand = c(0, 0)) +
-  scale_x_continuous(limits = c(0, 20), expand = c(0, 0)) +
-  coord_cartesian(clip = "off") +
-  labs(y = NULL, x = "Number of SNPs") +
-  theme_ridges()
+# By sample
+missingness |>
+    summarize(pct_N = mean(pct_N), .by = sample) |>
+    ggplot(aes(x = pct_N)) +
+    geom_histogram(binwidth = 0.5, fill = "steelblue", color = "black") +
+    labs(
+      title = "Mean missingness per sample",
+      x = "Mean percentage of missing data (N)",
+      y = "Frequency"
+    ) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
 ```
