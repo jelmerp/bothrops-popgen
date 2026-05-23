@@ -1,0 +1,192 @@
+sample	species	locality	state	contam	land_type
+I12279	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I12280	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I12281	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I1673	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I1675	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I1676	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I1677	alcatraz	Ilha dos Alcatrazes	SP	FALSE	island
+I1674	alcatraz	Ilha dos Alcatrazes	SP	TRUE	NA
+I1773	germanoi	Ilha da Moela	SP	FALSE	island
+I1771	germanoi	Ilha da Moela	SP	TRUE	NA
+I1774	germanoi	Ilha da Moela	SP	TRUE	NA
+I1775	germanoi	Ilha da Moela	SP	TRUE	NA
+I1485	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1486	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1678	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1679	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1684	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1685	insularis	Ilha da Queimada Grande	SP	FALSE	island
+I1681	insularis	Ilha da Queimada Grande	SP	TRUE	NA
+I1683	insularis	Ilha da Queimada Grande	SP	TRUE	NA
+I20937	jabrensis	NA	PB	FALSE	mainland
+I1793	jararaca	NA	BA	FALSE	mainland
+I1795	jararaca	NA	BA	FALSE	mainland
+I1796	jararaca	NA	BA	FALSE	mainland
+I1790	jararaca	NA	BA	FALSE	mainland
+I1506	jararaca	NA	ES	FALSE	mainland
+I1507	jararaca	NA	ES	FALSE	mainland
+I1508	jararaca	NA	ES	TRUE	NA
+I1786	jararaca	NA	ES	FALSE	mainland
+I1789	jararaca	NA	ES	FALSE	mainland
+I1801	jararaca	NA	ES	FALSE	mainland
+I1802	jararaca	NA	ES	FALSE	mainland
+I1791	jararaca	NA	ES	TRUE	NA
+I1792	jararaca	NA	ES	TRUE	NA
+I1502	jararaca	NA	ES	TRUE	NA
+I1503	jararaca	NA	ES	TRUE	NA
+I1607	jararaca	NA	ES	TRUE	NA
+I1611	jararaca	NA	ES	TRUE	NA
+I1612	jararaca	NA	ES	TRUE	NA
+I1613	jararaca	NA	ES	TRUE	NA
+I1228	jararaca	NA	ES	FALSE	mainland
+I1527	jararaca	NA	ES	TRUE	NA
+I1515	jararaca	NA	ES	FALSE	mainland
+I1522	jararaca	NA	ES	FALSE	mainland
+I1488	jararaca	NA	MG	FALSE	mainland
+I1621	jararaca	NA	MG	FALSE	mainland
+I1235	jararaca	NA	MG	FALSE	mainland
+I1690	jararaca	NA	MG	FALSE	mainland
+I1691	jararaca	NA	MG	FALSE	mainland
+I1798	jararaca	NA	MG	FALSE	mainland
+I1799	jararaca	NA	MG	FALSE	mainland
+I1525	jararaca	NA	MG	FALSE	mainland
+I1619	jararaca	NA	MG	FALSE	mainland
+I1687	jararaca	NA	MG	FALSE	mainland
+I1784	jararaca	NA	MG	FALSE	mainland
+I1800	jararaca	NA	MG	FALSE	mainland
+I1624	jararaca	NA	MG	FALSE	mainland
+I1622	jararaca	NA	MG	TRUE	NA
+I12277	jararaca	Condomínio Passárgada	MG	FALSE	mainland
+I12278	jararaca	Condomínio Passárgada	MG	FALSE	mainland
+I1615	jararaca	NA	MG	FALSE	mainland
+I1626	jararaca	NA	MG	FALSE	mainland
+I1625	jararaca	NA	MG	TRUE	NA
+I1614	jararaca	NA	MG	FALSE	mainland
+I1618	jararaca	NA	MG	TRUE	NA
+I1671	jararaca	NA	MG	FALSE	mainland
+I1623	jararaca	NA	MG	TRUE	NA
+I1520	jararaca	NA	MG	FALSE	mainland
+I1549	jararaca	NA	PR	FALSE	mainland
+I1551	jararaca	NA	PR	TRUE	NA
+I1554	jararaca	NA	PR	TRUE	NA
+I1805	jararaca	NA	PR	FALSE	mainland
+I1557	jararaca	NA	PR	TRUE	NA
+I18351	jararaca	NA	PR	FALSE	mainland
+I1558	jararaca	NA	PR	TRUE	NA
+I18362	jararaca	NA	PR	FALSE	mainland
+I18364	jararaca	NA	PR	FALSE	mainland
+I1533	jararaca	NA	RJ	FALSE	mainland
+I1526	jararaca	NA	RJ	FALSE	mainland
+I1528	jararaca	NA	RJ	FALSE	mainland
+I1509	jararaca	NA	RJ	TRUE	NA
+I1603	jararaca	NA	RJ	FALSE	mainland
+I1238	jararaca	NA	RJ	FALSE	mainland
+I1230	jararaca	NA	RJ	FALSE	mainland
+I1511	jararaca	NA	RJ	TRUE	NA
+I1609	jararaca	NA	RJ	TRUE	NA
+I1513	jararaca	NA	RJ	FALSE	mainland
+I1521	jararaca	NA	RJ	FALSE	mainland
+I1604	jararaca	NA	RJ	FALSE	mainland
+I1605	jararaca	NA	RJ	FALSE	mainland
+I1234	jararaca	NA	RJ	TRUE	NA
+I1518	jararaca	NA	RJ	TRUE	NA
+I1517	jararaca	NA	RJ	FALSE	mainland
+I1653	jararaca	NA	RS	FALSE	mainland
+I1670	jararaca	NA	RS	FALSE	mainland
+I1566	jararaca	NA	RS	FALSE	mainland
+I1650	jararaca	NA	RS	FALSE	mainland
+I1651	jararaca	NA	RS	FALSE	mainland
+I18396	jararaca	NA	RS	TRUE	NA
+I1659	jararaca	NA	RS	FALSE	mainland
+I1663	jararaca	NA	RS	FALSE	mainland
+I1652	jararaca	NA	RS	FALSE	mainland
+I1655	jararaca	NA	RS	FALSE	mainland
+I1656	jararaca	NA	RS	FALSE	mainland
+I1657	jararaca	NA	RS	FALSE	mainland
+I18379	jararaca	NA	RS	FALSE	mainland
+I18376	jararaca	NA	RS	TRUE	NA
+I18377	jararaca	NA	RS	TRUE	NA
+I18378	jararaca	NA	RS	TRUE	NA
+I1666	jararaca	NA	RS	FALSE	mainland
+I1667	jararaca	NA	RS	FALSE	mainland
+I18405	jararaca	NA	RS	TRUE	NA
+I18406	jararaca	NA	RS	TRUE	NA
+I1643	jararaca	NA	RS	FALSE	mainland
+I12297	jararaca	NA	SC	FALSE	mainland
+I1593	jararaca	NA	SC	FALSE	mainland
+I1595	jararaca	NA	SC	FALSE	mainland
+I1594	jararaca	NA	SC	TRUE	NA
+I1602	jararaca	NA	SC	FALSE	mainland
+I1645	jararaca	NA	SC	FALSE	mainland
+I1660	jararaca	NA	SC	FALSE	mainland
+I1665	jararaca	NA	SC	TRUE	NA
+I1497	jararaca	NA	SC	FALSE	mainland
+I12290	jararaca	NA	SC	FALSE	island
+I12294	jararaca	NA	SC	FALSE	island
+I1756	jararaca	NA	SC	FALSE	island
+I1761	jararaca	NA	SC	FALSE	island
+I1767	jararaca	NA	SC	FALSE	island
+I1768	jararaca	NA	SC	FALSE	island
+I1757	jararaca	NA	SC	TRUE	NA
+I1758	jararaca	NA	SC	TRUE	NA
+I1765	jararaca	NA	SC	TRUE	NA
+I1766	jararaca	NA	SC	TRUE	NA
+I1596	jararaca	NA	SC	FALSE	mainland
+I1597	jararaca	NA	SC	FALSE	mainland
+I1598	jararaca	NA	SC	FALSE	mainland
+I1494	jararaca	NA	SC	FALSE	mainland
+I1495	jararaca	NA	SC	FALSE	mainland
+I12295	jararaca	NA	SC	FALSE	mainland
+I12296	jararaca	NA	SC	TRUE	NA
+I1500	jararaca	NA	SC	FALSE	mainland
+I1501	jararaca	NA	SC	FALSE	mainland
+I18357	jararaca	NA	SC	FALSE	mainland
+I1489	jararaca	NA	SC	FALSE	mainland
+I1490	jararaca	NA	SC	FALSE	mainland
+I12287	jararaca	Forquilhas	SC	TRUE	NA
+I18395	jararaca	NA	SC	TRUE	NA
+I12285	jararaca	Acesso ao Canteiro de obras UHE São Roque	SC	TRUE	NA
+I12286	jararaca	BR-282	SC	TRUE	NA
+I1770	jararaca	NA	SC	FALSE	mainland
+I1803	jararaca	NA	SP	FALSE	mainland
+I1708	jararaca	NA	SP	FALSE	mainland
+I1644	jararaca	NA	SP	FALSE	mainland
+I1739	jararaca	NA	SP	FALSE	mainland
+I1639	jararaca	NA	SP	TRUE	NA
+I1493	jararaca	NA	SP	FALSE	mainland
+I1492	jararaca	NA	SP	TRUE	NA
+I1636	jararaca	NA	SP	FALSE	mainland
+I1740	jararaca	NA	SP	FALSE	mainland
+I1747	jararaca	NA	SP	FALSE	mainland
+I1748	jararaca	NA	SP	FALSE	mainland
+I1753	jararaca	NA	SP	FALSE	mainland
+I1755	jararaca	NA	SP	FALSE	mainland
+I1752	jararaca	NA	SP	TRUE	NA
+I1754	jararaca	NA	SP	TRUE	NA
+I1808	jararaca	NA	SP	FALSE	mainland
+I1807	jararaca	NA	SP	TRUE	NA
+I1700	jararaca	NA	SP	FALSE	mainland
+I1744	jararaca	NA	SP	FALSE	mainland
+I1631	jararaca	NA	SP	FALSE	mainland
+I1806	jararaca	NA	SP	FALSE	mainland
+I1600	jararaca	NA	SP	FALSE	mainland
+I1601	jararaca	NA	SP	FALSE	mainland
+I1697	jararaca	NA	SP	FALSE	mainland
+I1698	jararaca	NA	SP	FALSE	mainland
+I1701	jararaca	NA	SP	FALSE	mainland
+I1702	jararaca	NA	SP	FALSE	mainland
+I1703	jararaca	NA	SP	FALSE	mainland
+I1704	jararaca	NA	SP	FALSE	mainland
+I1705	jararaca	NA	SP	FALSE	mainland
+I1646	jararaca	NA	SP	FALSE	mainland
+I1635	jararaca	NA	SP	FALSE	mainland
+I7456	otavioi	Ilha da Vitória	SP	FALSE	island
+I1717	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1722	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1723	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1728	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1729	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1731	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1737	sazimai	Ilha dos Franceses	ES	FALSE	island
+I1726	sazimai	Ilha dos Franceses	ES	TRUE	NA
