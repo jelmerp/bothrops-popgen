@@ -1,0 +1,1517 @@
+---
+title: "Locus and sample QC"
+author: "Jelmer Poelstra"
+date: today
+format:
+  html:
+    self-contained: true
+    cache: false
+    number-sections: true
+    number-depth: 2
+    toc: true
+    toc-depth: 3
+    fig-dpi: 300
+    df-print: kable
+    grid:
+      body-width: 800px
+knitr:
+  opts_chunk:
+    message: FALSE
+    out.width: "85%"
+    R.options:
+      knitr.table.html.attr: "quarto-disable-processing=true"
+execute:
+  echo: false
+  warning: false
+editor_options:
+  chunk_output_type: console
+---
+
+-------
+
+<br>
+
+```{r}
+# --- Setup
+# Load packages
+library(tidyverse)
+library(gt)
+library(here)
+
+# Settings
+theme_set(theme_classic(base_size = 14))
+theme_update(plot.title = element_text(face = "bold", hjust = 0.5))
+
+# ggplot picks a plot's default scale by looking up `scale_<aes>_<type>` in the
+# global environment before its own namespace, so shadowing it here doubles the
+# x-axis break density everywhere at once. Plots that pass their own `breaks`
+# still win, since `breaks` takes precedence over `n.breaks`.
+scale_x_continuous <- function(...) ggplot2::scale_x_continuous(n.breaks = 10, ...)
+
+# --- Table helpers
+# Columns whose values are all whole numbers are printed without decimals;
+# everything else numeric gets `digits` decimals, so no table shows 5+ decimals
+is_whole <- function(x) is.numeric(x) && all(x == round(x), na.rm = TRUE)
+
+# Tables are left at their natural width unless `full_width` is set, since most
+# of them have a handful of narrow columns and look better not stretched out
+qc_gt <- function(df, digits = 2, title = NULL, full_width = FALSE) {
+  tab <- df |>
+    gt() |>
+    fmt_number(
+      columns = where(\(x) is.numeric(x) && !is_whole(x)),
+      decimals = digits
+    ) |>
+    fmt_integer(columns = where(is_whole)) |>
+    sub_missing(missing_text = "–") |>
+    cols_label_with(fn = \(x) str_replace_all(x, "_", " ")) |>
+    tab_options(
+      table.width = if (full_width) pct(100) else "auto",
+      table.font.size = px(15),
+      data_row.padding = px(3),
+      column_labels.font.weight = "bold",
+      heading.title.font.weight = "bold"
+    )
+  if (!is.null(title)) tab <- tab |> tab_header(title = title)
+  tab
+}
+
+# For the descriptive pipeline tables, whose cells contain inline code
+doc_gt <- function(df, full_width = TRUE) {
+  df |>
+    gt() |>
+    fmt_markdown(columns = where(is.character)) |>
+    sub_missing(missing_text = "–") |>
+    cols_label_with(fn = \(x) str_replace_all(x, "_", " ")) |>
+    tab_options(
+      table.width = if (full_width) pct(100) else "auto",
+      table.font.size = px(15),
+      data_row.padding = px(3),
+      column_labels.font.weight = "bold"
+    )
+}
+
+# Define input files (all written by scripts/05a_prep-qc-tables.R)
+indir <- here("results/stats/summaries")
+all_file <- file.path(indir, "sample-by-locus-stats.tsv")
+locus_file <- file.path(indir, "per-locus-stats.tsv")
+sample_file <- file.path(indir, "per-sample-stats.tsv")
+summary_file <- file.path(indir, "filtering-summary.tsv")
+
+# Written by 04g, not 05a: depth against distance from the capture-probe edge
+profile_file <- here("results/stats/depth_profile/depth_profile.tsv")
+
+# Written by the 4I side runs of 04b and 04f, which scored the flagged samples
+# together with the retained ones
+sex_flagged_file <- here("results/stats/sex_z_flagged/sex_calls.tsv")
+vcf_stats_flagged_file <- here("results/stats/vcf_tstv_flagged/per_sample_vcf_stats.tsv")
+
+# Written by 04h: every het genotype that reached the 02b allele-balance filter
+ab_files <- list.files(here("results/stats/allele_balance"),
+                       pattern = "_het-ab\\.tsv\\.gz$", full.names = TRUE)
+
+# Read input files. `z_class` is NA for every autosomal locus, which is the
+# large majority, so readr guesses logical from the leading rows and silently
+# turns each real class into NA unless the type is given.
+all <- read_tsv(all_file, col_types = cols(z_class = "c", .default = col_guess()))
+per_locus <- read_tsv(locus_file, show_col_types = FALSE)
+per_sample <- read_tsv(sample_file, show_col_types = FALSE)
+filtering_summary <- read_tsv(summary_file, show_col_types = FALSE)
+dp_profile <- read_tsv(profile_file, show_col_types = FALSE)
+sex_flagged <- read_tsv(sex_flagged_file, show_col_types = FALSE)
+vcf_stats_flagged <- read_tsv(vcf_stats_flagged_file, show_col_types = FALSE)
+# `ao` is '.' where freebayes reports no alternate observation
+het_ab <- read_tsv(ab_files, id = "sample", na = c("NA", "."),
+                   col_types = "cicdddnc") |>
+  mutate(sample = str_remove(basename(sample), "_het-ab\\.tsv\\.gz$"))
+
+# The sample-by-locus table still holds the loci dropped by 04b/04c, so that the
+# sections below can compare them against the retained ones; everything that is
+# meant to describe the final data set filters on `retained_final` first
+all_final <- all |> filter(retained_final)
+locus_final <- per_locus |> filter(retained_final)
+sample_final <- per_sample |> filter(retained)
+
+n_contam <- sum(per_sample$contam, na.rm = TRUE)
+
+# Samples with a median allele balance below this are listed in the
+# flagged-samples section and counted in the summary
+ab_low <- 0.45
+n_low_ab_flagged <- sum(per_sample$contam %in% TRUE & per_sample$ab_median < ab_low, na.rm = TRUE)
+n_low_ab_retained <- sum(sample_final$ab_median < ab_low, na.rm = TRUE)
+```
+
+## Summary
+
+- `r nrow(sample_final)` of `r nrow(per_sample)` samples and
+  `r nrow(locus_final)` of `r nrow(per_locus)` loci are retained.
+- Sequencing batch is the largest technical factor: capture worked about twice as
+  well in the 605 run, so depth-based numbers should be read by batch.
+- Short (~200 bp) baits have about half the depth of long ones because of capture
+  geometry, but give only modestly worse usable data.
+- The 02b allele-balance filter blanks ~2% of evaluated hets; the pooled balance
+  shows reference bias, not a genome-wide paralog signal.
+- Paralog filters: `r sum(per_locus$stage == "dropped: excess het")` loci are
+  dropped for excess heterozygosity and
+  `r sum(per_locus$stage == "dropped: allele balance")` on allele balance alone;
+  all `r sum(str_starts(per_locus$stage, "dropped: Z"))` sex-linked loci are
+  dropped.
+- I1495, I1507, I1624 and I1517 look like they may contain a second DNA source;
+  none is flagged in the metadata.
+- Of the `r n_contam` metadata-flagged samples, `r n_low_ab_flagged` have a median
+  allele balance below `r ab_low`, against `r n_low_ab_retained` of the retained
+  samples.
+- I20937, the only *B. jabrensis*, has 10% of all singletons.
+
+## Pipeline overview
+
+### Step 1 --- Locus definition by BLAST
+
+Probes are BLASTed against the reference genome (`01b_blast.sh`) and the hits
+are filtered (`01d_filter-loci.R`):
+
+```{r}
+tribble(
+  ~Step, ~Setting, ~Value,
+  "BLAST", "`--top_n_query`", "5 hits per probe",
+  "BLAST", "`--pct_id`", "≥ 90%",
+  "BLAST", "`--pct_qcov` (HSP-based)", "≥ 80%",
+  "`01d_filter-loci.R`", "Percent identity (`pident`)", "≥ 95% for at least one hit",
+  "`01d_filter-loci.R`", "Query coverage (`qcovhsp`)", "≥ 90% for at least one hit",
+  "`01d_filter-loci.R`", "Multi-hit probes", "Removed entirely (probes with > 1 BLAST hit)",
+  "BED output", "Buffer around each hit", "300 bp on each side (`buffer_size`)"
+) |>
+  doc_gt()
+```
+
+Result: 2,000 probes → 1,936 with BLAST hits → 1,819 loci.
+
+### Step 2 --- Genotype calling and consensus generation
+
+A) Read processing and variant calling ---
+   uses the nf-core Sarek pipeline, run per sample:
+
+```{r}
+tribble(
+  ~Step, ~Tool, ~Setting,
+  "Trimming", "fastp 0.24.0", "Adapter trimming, remove reads <15 bp, otherwise fastp defaults",
+  "Mapping", "bwa-mem 0.7.18", "Default settings",
+  "Duplicates", "GATK4 MarkDuplicates", "Duplicates marked — these are then ignored by freebayes",
+  "Base recalibration", "—", "Skipped (`skip_tools: baserecalibrator`)",
+  "Calling regions", "—", "Restricted to the probe BED (`intervals`)",
+  "Variant calling", "freebayes 1.3.10", "`--report-monomorphic --genotype-qualities`, otherwise default"
+) |>
+  doc_gt()
+```
+
+B) Genotype filtering and consensus generation ---
+   eight `bcftools` steps in `02b_bcftools-consensus.sh`:
+
+```{r}
+tribble(
+  ~Step, ~Setting, ~Value, ~Effect,
+  "0\\. Block splitting", "—", "—", "Multi-bp monomorphic records split into one per base",
+  "1\\. Genotype quality", "`--filter_expr`", "`FORMAT/DP < 5 || FORMAT/GQ < 20`", "Genotypes below depth/GQ set to missing (`./.`)",
+  "2\\. Site quality", "`--min_qual`", "30", "Genotypes at low-QUAL variant sites set to missing",
+  "3\\. Indel proximity", "`--snp_gap`", "5 bp", "Genotypes at SNPs within 5 bp of an indel set to missing",
+  "4\\. Normalization", "`bcftools norm`", "`--multiallelics -any --atomize`", "Splits multiallelics and MNVs, left-aligns indels",
+  "5\\. Indels", "`bcftools view`", "`-V indels`", "Indels removed; SNPs only",
+  "6\\. Allele balance", "`--min_ab` / `--max_ab`", "0.25 / 0.75", "Skewed heterozygote genotypes set to missing (only where AO + RO is within 2 reads of DP, `--ab_tol`)",
+  "7\\. Multiallelics", "`--drop_multiallelic`", "`true`", "Positions left with >1 record after step 4 are removed"
+) |>
+  doc_gt()
+```
+
+_(Step 0 exists because freebayes occasionally merges a run of invariant positions_
+_into a single record (REF several bp long, ALT `.`), which can span past the end_
+_of the per-region reference slice given to `bcftools consensus` and crash it.)_
+
+Consensus sequences are then generated with `bcftools consensus`, where
+heterozygous sites get IUPAC ambiguity codes and missing/absent genotypes
+become `N`.
+
+### Step 3 --- Pivot, trim, and filter consensus sequences
+
+A) Pivot to locus-centric FASTA files (`03_pivot-fasta.sh`).
+
+B) Per-locus trimming with ClipKIT --- `03b_clipkit.sh` to remove the terminal
+   `N` stretches caused by the buffers (terminal column is trimmed if >25% of
+   sequences have `N` at that position).
+
+C) Sample and locus filtering --- `03c_filter-loci.sh`, applied in this order:
+
+```{r}
+tribble(
+  ~Step, ~Parameter, ~Value, ~Effect,
+  "1\\. A priori sample removal", "`--remove_samples`", "—", "Samples flagged as contaminated in `metadata/metadata-final.tsv`",
+  "2\\. Per-sample missingness", "`max_missing_sample`", "0.1", "Samples with mean >10% `N` across all loci removed",
+  "3\\. Minimum locus length", "`min_locus_length`", "150 bp", "Post-trimming alignment length",
+  "4\\. Per-locus missingness", "`max_missing_locus`", "0.2", "Loci with mean >20% `N` across retained samples removed"
+) |>
+  doc_gt()
+```
+
+_(Per-locus missingness in step 4 is recomputed after sample removal in steps_
+_1-2, so the locus filter is based only on retained samples. VCFs are then subset_
+_to the retained samples and loci.)_
+
+### Step 4 --- Sex-linked loci
+
+Sample sex is called from the Z:autosome depth ratio, and each Z locus is
+classified as hemizygous, PAR-like, gametolog, or paralog, using the same
+per-site excess-heterozygosity statistic as step 5. **Every** sex-linked locus
+is currently dropped (`z_policy=all`).
+
+### Step 5 --- Paralog filter: excess heterozygosity and allele balance
+
+Paralogous loci are detected using two tests; a locus failing either is dropped:
+
+- The first test uses a per-site statistic `f`, the fraction of called samples that
+  are heterozygous.
+- The second uses allele balance: where one of two collapsed copies carries a variant, a
+  het shows it on a quarter to a third of the reads rather than half, in most
+  samples that are heterozygous there.
+
+```{r}
+tribble(
+  ~Parameter, ~Value, ~Effect,
+  "`min_call_frac`", "0.25", "A site is only scored when at least this fraction of samples has a called genotype",
+  "`max_het_frac`", "0.6", "A scored site with `f` above this is an 'excess-het site' (the HWE maximum is 0.5)",
+  "`max_site_frac`", "0.005", "A locus is dropped when more than this fraction of its scored sites are excess-het sites...",
+  "`min_het_sites`", "3", "...and it has at least this many excess-het sites",
+  "`min_ab_hets`", "5", "A sample counts toward a locus's allele-balance test when it has at least this many evaluated hets there...",
+  "`ab_skew_cutoff`", "0.4", "...and the locus is skewed in that sample when their median allele balance is below this",
+  "`min_ab_samples`", "20", "A locus is only judged on allele balance with at least this many counted samples",
+  "`max_ab_skew_frac`", "0.5", "A locus is dropped when it is skewed in more than this fraction of counted samples"
+) |>
+  doc_gt()
+```
+
+## Filtering summary
+
+Loci and samples remaining after each filtering step:
+
+```{r}
+filtering_summary |> qc_gt(full_width = TRUE)
+```
+
+Step at which each locus and sample was dropped:
+
+```{r}
+per_locus |> count(stage, name = "n_loci") |> qc_gt()
+per_sample |> count(stage, name = "n_samples") |> qc_gt()
+```
+
+## Depth of coverage
+
+### Per sample
+
+The depth figures in this section are mean FORMAT/DP over called genotypes
+within the retained locus intervals. These are a capture probe plus a 300-bp
+buffer on each side, after ClipKIT trimmed the poorly covered ends. A median of
+~350 bp of buffer remains on short loci and ~310 bp on long ones. The buffer is
+much less deeply covered than the probe (~25x over its full width, against ~45x
+on short and ~70x on long probes; see *Locus lengths* below). These numbers are
+therefore lower than on-probe depth, and loci of different lengths are not
+directly comparable. Between samples the effect is small: buffer depth is
+0.36--0.48 of probe depth in every sample.
+
+```{r}
+sample_final |>
+  ggplot(aes(x = mean_dp)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "black") +
+  labs(
+    title = "Mean depth of coverage per sample",
+    x = "Mean depth of coverage",
+    y = "Frequency (samples)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+#### The depth outlier: I1767
+
+I1767 has by far the highest depth. Looks like it was simply sequenced deeper,
+as other stats for this sample are not unusual.
+Duplication at 10.8% is the second-highest, but that makes sense given the depth.
+
+```{r}
+sample_final |>
+  select(sample, species, mean_dp, n_reads, pct_on_target, enrichment,
+         pct_duplication, error_rate, mean_pct_N_final, ts_tv, n_singletons) |>
+  arrange(desc(mean_dp)) |>
+  head(5) |>
+  qc_gt(digits = 4)
+```
+
+### Per locus
+
+```{r}
+locus_final |>
+  ggplot(aes(x = mean_dp)) +
+  geom_histogram(binwidth = 2, fill = "steelblue", color = "black") +
+  labs(
+    title = "Mean depth of coverage per locus",
+    x = "Mean depth of coverage (averaged over samples)",
+    y = "Frequency (loci)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Depth is the main driver of missingness, so these should be related
+locus_final |>
+  ggplot(aes(x = mean_dp, y = 100 * (1 - mean_call_frac))) +
+  geom_point(alpha = 0.3, size = 1.5, color = "steelblue") +
+  labs(
+    title = "Locus depth vs. locus missingness",
+    x = "Mean depth of coverage",
+    y = "Mean percentage of missing data (N)"
+  )
+```
+
+## Mapping and capture
+
+Per-sample stats:
+
+```{r}
+sample_final |>
+  select(sample, n_reads, pct_mapped, pct_properly_paired, pct_mq0,
+         pct_duplication, pct_on_target, target_mean_dp, enrichment) |>
+  summarize(across(!sample, list(min = min, median = median, max = max))) |>
+  pivot_longer(
+    everything(),
+    names_to = c("metric", "stat"),
+    names_pattern = "(.*)_(min|median|max)"
+  ) |>
+  pivot_wider(names_from = stat, values_from = value) |>
+  gt() |>
+  # Read counts are in the millions and the rates are percentages, so a shared
+  # format would render one of them unreadably
+  fmt_number(columns = c(min, median, max), decimals = 2) |>
+  fmt_integer(columns = c(min, median, max), rows = metric == "n_reads") |>
+  cols_label_with(fn = \(x) str_replace_all(x, "_", " ")) |>
+  tab_options(
+    table.width = pct(100),
+    table.font.size = px(15),
+    data_row.padding = px(3),
+    column_labels.font.weight = "bold"
+  )
+```
+
+```{r}
+# The share of all sequenced bases that landed inside the probe intervals. The
+# targets are 2.2 Mb of a 1.57 Gb genome, so even a modest percentage here is a
+# large enrichment. Filled by batch because the two runs separate almost
+# completely on this axis -- see the section below.
+sample_final |>
+  ggplot(aes(x = pct_on_target, fill = seq_batch)) +
+  geom_histogram(binwidth = 0.25, color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "On-target rate per sample",
+    x = "Percentage of sequenced bases inside the probe intervals",
+    y = "Frequency (samples)",
+    fill = "Batch"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Read count sets the ceiling on depth, but the conversion rate differs per
+# batch, so there are two trends rather than one. Coloring by duplicate rate
+# here would be misleading: duplication is itself higher in the 605 batch, so
+# the gradient would mostly re-encode the batch.
+sample_final |>
+  ggplot(aes(x = n_reads / 1e6, y = mean_dp, color = seq_batch)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, linewidth = 0.7) +
+  scale_color_brewer(palette = "Set2") +
+  labs(
+    title = "Read count vs. depth",
+    x = "Read count (millions)",
+    y = "Mean depth of coverage",
+    color = "Batch"
+  )
+```
+
+### Sequencing batch
+
+The samples were sequenced in two runs (script 02d reads the run and flowcell
+from the FASTQ read names), and the capture worked about twice as well in one of
+them. This is the single largest structuring factor in the coverage data, so it
+is worth stating explicitly before any of the depth- or missingness-based
+numbers below are read as biology.
+
+```{r}
+sample_final |>
+  summarize(
+    n_samples = n(),
+    across(c(n_reads, pct_on_target, enrichment, pct_duplication, mean_dp,
+             mean_pct_N_final),
+           mean),
+    dp_per_Mread = mean(mean_dp / (n_reads / 1e6)),
+    .by = seq_batch
+  ) |>
+  arrange(seq_batch) |>
+  relocate(dp_per_Mread, .after = mean_dp) |>
+  qc_gt(title = "Per-batch means", full_width = TRUE)
+```
+
+The mechanism is the on-target rate, and nothing else: across all retained
+samples, the depth a million reads buys correlates with `pct_on_target` at
+r = 0.998, and still at 0.988 *within* each batch. The two batches do not
+overlap at all on that axis, which is why the scatterplot above splits into two
+lines instead of one cloud.
+
+```{r}
+sample_final |>
+  summarize(
+    n = n(),
+    on_target_min = min(pct_on_target),
+    on_target_max = max(pct_on_target),
+    dup_min = min(pct_duplication),
+    dup_max = max(pct_duplication),
+    r_dp_vs_on_target = cor(mean_dp / (n_reads / 1e6), pct_on_target),
+    r_dp_vs_dup = cor(mean_dp / (n_reads / 1e6), pct_duplication),
+    .by = seq_batch
+  ) |>
+  arrange(seq_batch) |>
+  qc_gt(title = "Spread and correlations within each batch", full_width = TRUE)
+
+# Loci called per sample, per batch, for the text below
+loci_called <- sample_final |>
+  summarize(mean = round(mean(n_loci_called)), min = min(n_loci_called),
+            .by = seq_batch)
+lc <- function(b, col) loci_called[[col]][loci_called$seq_batch == b]
+```
+
+Two things partly offset the difference. The weaker-capture batch was sequenced
+about 30% deeper, and it also has the lower duplicate rate, so its samples end
+up down and to the right in the scatterplot rather than simply below. The net
+effect on the final data is real but modest: mean missingness after filtering is
+`r round(mean(sample_final$mean_pct_N_final[sample_final$seq_batch == "605_HCTGLBCXX"]), 2)`%
+in the 605 batch against
+`r round(mean(sample_final$mean_pct_N_final[sample_final$seq_batch == "705_H2HLLBCXY"]), 2)`%
+in the 705 batch, and the number of loci called per sample is essentially
+identical between them (mean `r lc("605_HCTGLBCXX", "mean")` and
+`r lc("705_H2HLLBCXY", "mean")` of `r nrow(locus_final)`, with a per-sample
+minimum of `r lc("605_HCTGLBCXX", "min")` and `r lc("705_H2HLLBCXY", "min")`).
+
+Batch is not confounded with the main biological groupings: the split is close
+to even for *jararaca* and for the mainland samples. It is not even, however,
+for the island endemics --- *insularis* and *sazimai* were sequenced only in the
+605 batch and most *alcatraz* samples in the 705 batch --- so any
+between-species comparison of a coverage-derived quantity should be checked
+against this table.
+
+```{r}
+sample_final |>
+  count(land_type, species, seq_batch) |>
+  pivot_wider(names_from = seq_batch, values_from = n, values_fill = 0) |>
+  arrange(land_type, species) |>
+  qc_gt(title = "Samples per land type, species and batch")
+```
+
+One sample crosses over: `I1619` was sequenced in the 605 batch but sits with
+the 705 cloud. It has the highest duplicate rate in the data set (14.4%) on top
+of the lowest on-target rate of its own batch.
+
+Batch also affects which samples survive filtering: of the
+`r sum(per_sample$stage == "dropped: missingness")` samples dropped for
+missingness in 03c,
+`r sum(per_sample$stage == "dropped: missingness" & per_sample$seq_batch == "705_H2HLLBCXY", na.rm = TRUE)`
+are from the 705 batch.
+
+```{r}
+per_sample |>
+  filter(stage %in% c("retained", "dropped: missingness")) |>
+  count(seq_batch, stage) |>
+  pivot_wider(names_from = stage, values_from = n, values_fill = 0) |>
+  qc_gt(title = "Samples retained and dropped for missingness, per batch")
+```
+
+## Locus lengths
+
+```{r}
+# All loci with a length from 03c, so the `min_locus_length` cutoff is visible
+per_locus |>
+  mutate(set = ifelse(retained_final, "retained", "dropped")) |>
+  ggplot(aes(x = length, fill = set)) +
+  geom_histogram(binwidth = 50, color = "black") +
+  geom_vline(xintercept = 150, linetype = "dashed") +
+  labs(x = "Locus length (bp)", y = "Frequency (loci)", fill = NULL) +
+  scale_fill_manual(values = c(retained = "steelblue", dropped = "grey70")) +
+  # 125-bp breaks collide on an axis this wide, so this plot keeps 250
+  scale_x_continuous(breaks = seq(0, 5000, by = 250)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+Length and depth go together
+(r = `r round(cor(locus_final$length, locus_final$mean_dp, use = "complete.obs"), 2)`),
+for two reasons.
+
+The first is capture geometry. A locus is one bait plus 300 bp of buffer on each
+side, and the baits come in two sizes, ~200 and ~1,950 bp. The buffer is covered
+at ~25x and makes up three quarters of a short interval but under a quarter of a
+long one. On the bait itself, capture efficiency ramps up over the first ~300 bp
+from its edge (script 04g, below), so a ~200-bp bait never reaches the plateau
+that long baits hold.
+
+```{r}
+# Probe length class per locus, also used in the allele-balance section
+probe_dp <- locus_final |>
+  mutate(
+    probe_len = n_sites_pre - 600,
+    probe_class = ifelse(probe_len < 600, "short", "long")
+  )
+
+# The outermost bins on each side are thin -- few probes are long enough to fill
+# the innermost bin of their class, and few loci sit far enough from a neighbor
+# to fill the outermost buffer bin -- and they run against the trend, so bins
+# holding under 10% of their class's typical bin are dropped rather than plotted
+dp_profile_plot <- dp_profile |>
+  filter(n_pos >= 0.1 * median(n_pos), .by = probe_class)
+
+dp_profile_plot |>
+  filter(dist_bin >= -300, dist_bin <= 600) |>
+  ggplot(aes(x = dist_bin + 25, y = mean_dp, color = probe_class)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.8) +
+  labs(
+    title = "Depth against distance from the capture-probe edge",
+    subtitle = "Negative distances are buffer; 0 is the first on-probe base",
+    x = "Distance from nearest probe edge (bp)",
+    y = "Mean depth of coverage",
+    color = "Probe class"
+  ) +
+  scale_x_continuous(breaks = seq(-300, 600, by = 100)) +
+  scale_y_continuous(n.breaks = 8)
+```
+
+The second is trimming, where depth sets length rather than the reverse: ClipKIT
+removes mostly-`N` ends, so a poorly covered locus finishes short (`pct_trimmed`
+vs. depth
+r = `r round(cor(locus_final$pct_trimmed, locus_final$mean_dp, use = "complete.obs"), 2)`).
+Within the short class, where every locus starts from the same 800-bp interval,
+final length still tracks depth
+(r = `r round(with(filter(probe_dp, probe_class == "short"), cor(length, mean_dp)), 2)`).
+
+```{r}
+per_locus |>
+  filter(retained_final) |>
+  ggplot(aes(x = length, y = mean_dp, color = pct_trimmed)) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "Locus length vs. depth",
+    x = "Locus length after trimming (bp)",
+    y = "Mean depth of coverage",
+    color = "% trimmed"
+  ) +
+  scale_y_continuous(n.breaks = 8) +
+  scale_color_viridis_c(option = "plasma", end = 0.9)
+```
+
+```{r}
+# Short vs. long final loci, for the text below
+by_len <- locus_final |>
+  mutate(size = ifelse(length < 1000, "short", "long")) |>
+  summarize(
+    n = n(),
+    dp = median(mean_dp),
+    call = median(mean_call_frac),
+    worst_call = median(min_call_frac),
+    prop_var = median(prop_variable),
+    n_pi = median(n_pi),
+    .by = size
+  )
+bl <- function(size, col) by_len[[col]][by_len$size == size]
+```
+
+Median depth is `r round(bl("short", "dp"), 1)` for loci under 1,000 bp
+(n = `r bl("short", "n")`) against `r round(bl("long", "dp"), 1)` for the longer
+ones (n = `r bl("long", "n")`), but that gap overstates the difference in usable
+data: the low-depth buffer is largely what ClipKIT trims away. After trimming,
+the short loci are only modestly worse --- median call fraction
+`r round(bl("short", "call"), 3)` against `r round(bl("long", "call"), 3)`, and
+`r round(bl("short", "worst_call"), 2)` against
+`r round(bl("long", "worst_call"), 2)` for the worst sample at each locus --- and
+their per-base informativeness is similar (median `prop_variable`
+`r round(bl("short", "prop_var"), 3)` against `r round(bl("long", "prop_var"), 3)`).
+They contribute fewer parsimony-informative sites (median `r round(bl("short", "n_pi"))`
+against `r round(bl("long", "n_pi"))`) because they are shorter, not because they are
+called less well.
+
+## End trimming
+
+ClipKIT (script 03b) removed terminal columns that were mostly N, and script 03d
+tabulated how much went per locus. The buffer is at most 75% of an interval (600
+of 800 bp for a short locus), so a locus trimmed by 80-99% also lost part of its
+probe: what remains is short and usually poorly covered.
+
+Loci where ClipKIT failed (`trim_failed`) were left untrimmed and show up at 0%;
+it failed because missing data was high across the whole locus.
+
+```{r}
+per_locus |>
+  mutate(set = case_when(
+    trim_failed ~ "ClipKIT failed",
+    retained_final ~ "retained",
+    .default = "dropped"
+  )) |>
+  ggplot(aes(x = pct_trimmed, fill = set)) +
+  geom_histogram(binwidth = 2, color = "black") +
+  labs(
+    title = "Percentage of each alignment trimmed",
+    x = "Percentage of alignment columns trimmed",
+    y = "Frequency (loci)",
+    fill = NULL
+  ) +
+  scale_fill_manual(values = c(retained = "steelblue", dropped = "grey70",
+                               `ClipKIT failed` = "firebrick")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Heavy trimming should track with low retained depth, since both follow from a
+# locus that captured poorly
+locus_final |>
+  ggplot(aes(x = pct_trimmed, y = mean_dp)) +
+  geom_point(alpha = 0.3, size = 1.5, color = "steelblue") +
+  labs(
+    title = "Trimming vs. depth",
+    x = "Percentage of alignment columns trimmed",
+    y = "Mean depth of coverage"
+  )
+```
+
+## Missingness
+
+### Per locus
+
+Missingness is shown here for every locus that entered step 3, including the
+ones later dropped, so that the `max_missing_locus` threshold (20%) is visible
+instead of cutting the distribution off at its own value. Loci are colored by
+where they left the pipeline, since the ones dropped for length, sex linkage, excess
+heterozygosity or allele balance are not a comment on missingness:
+
+```{r}
+#| fig-height: 4
+per_locus |>
+  ggplot(aes(x = pct_N_prefilt, fill = stage)) +
+  geom_histogram(binwidth = 1, color = "black", linewidth = 0.2) +
+  geom_vline(xintercept = 20, linetype = "dashed", color = "grey30") +
+  labs(
+    title = "Mean missingness per locus, before filtering",
+    x = "Mean percentage of missing data (N)",
+    y = "Frequency (loci)",
+    fill = NULL
+  ) +
+  scale_fill_viridis_d(option = "turbo") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+### Per sample
+
+```{r}
+# `pct_N` is 03c's value over all loci before the locus filters, so the samples
+# it removed show up against the `max_missing_sample` cutoff
+per_sample |>
+  filter(!is.na(pct_N)) |>
+  mutate(set = ifelse(retained, "retained", "dropped")) |>
+  ggplot(aes(x = pct_N, fill = set)) +
+  geom_histogram(binwidth = 1, color = "black", linewidth = 0.2) +
+  geom_vline(xintercept = 10, linetype = "dashed", color = "grey30") +
+  labs(
+    title = "Mean missingness per sample, before filtering",
+    x = "Mean percentage of missing data (N)",
+    y = "Frequency (samples)",
+    fill = NULL
+  ) +
+  scale_fill_manual(values = c(retained = "steelblue", dropped = "grey70")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Depth is the main driver here too
+sample_final |>
+  ggplot(aes(x = mean_dp, y = mean_pct_N_final)) +
+  geom_point(alpha = 0.6, size = 2.5, color = "steelblue") +
+  labs(
+    title = "Sample depth vs. sample missingness",
+    x = "Mean depth of coverage",
+    y = "Mean percentage of missing data (N)"
+  )
+```
+
+## Sample sex
+
+Snakes are ZW, so females are hemizygous over the differentiated part of the Z
+and show about half the male depth there.
+
+```{r}
+sample_final |>
+  ggplot(aes(x = z_depth_ratio, fill = sex)) +
+  geom_histogram(binwidth = 0.01, color = "black") +
+  labs(
+    title = "Z:autosome depth ratio",
+    x = "Z:autosome depth ratio",
+    y = "Frequency (samples)",
+    fill = "Sex"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+sample_final |> count(sex, sex_confident) |> qc_gt()
+```
+
+Sex is assigned by splitting the sorted depth ratios at their largest internal
+gap, so every sample gets a call however intermediate its ratio is. The
+confidence flag is what marks the shaky ones: three statistics --- the depth
+ratio, heterozygosity over the hemizygous Z, and the number of heterozygous
+gametolog sites --- are z-scored within the assigned sex group using the median
+and a MAD-based SD, and a sample exceeding `max_group_z` (3) on any of them is
+flagged, as is any sample below `min_auto_dp` (15) autosomal depth.
+
+Samples whose sex could not be called with confidence:
+
+```{r}
+sample_final |>
+  filter(!sex_confident) |>
+  select(sample, species, mean_dp, z_depth_ratio, z_het_density,
+         n_het_gametolog, sex, sex_flags) |>
+  arrange(z_depth_ratio) |>
+  qc_gt(digits = 4)
+```
+
+Most flagged samples are females whose depth ratio sits between the two modes,
+which the gap split has to assign to one side; the `sex_flags` column shows which
+statistic flagged each sample.
+
+## Excess heterozygosity
+
+This is one of the two paralog tests in 04c (the other is allele balance,
+below). A locus is dropped as a likely collapsed paralog when more than 0.5% of its
+scored sites (`max_site_frac`), and at least 3 sites (`min_het_sites`), are
+heterozygous in more than 60% of called samples (`max_het_frac`, against a
+maximum of 0.5 under HWE). For those thresholds to be meaningful the flagged
+loci should stand apart rather than form the tail of a continuous distribution.
+
+Note that the `pct_max_site_het` column below is the *observed* maximum across
+the sites of a locus, not the threshold.
+
+```{r}
+per_locus |>
+  filter(!is.na(excess_site_frac)) |>
+  mutate(set = ifelse(retained_final, "retained", "dropped")) |>
+  ggplot(aes(x = 100 * excess_site_frac, fill = set)) +
+  geom_histogram(binwidth = 0.05, color = "black") +
+  # The 0.5% cutoff. It is not on its own a boundary, since dropping also needs
+  # >= 3 excess-het sites, but no retained locus happens to sit right of it
+  geom_vline(xintercept = 0.5, linetype = "dashed") +
+  labs(
+    title = "Excess-heterozygosity sites per locus",
+    x = "Percentage of scored sites heterozygous in > 60% of samples",
+    y = "Frequency (loci)",
+    fill = NULL
+  ) +
+  scale_fill_manual(values = c(retained = "steelblue", dropped = "grey70")) +
+  # Default breaks are spaced for a linear axis and leave the log1p scale with
+  # almost none, so they are given explicitly
+  scale_y_continuous(
+    transform = "log1p",
+    breaks = c(0, 1, 3, 10, 30, 100, 300, 1000),
+    expand = expansion(mult = c(0, 0.1))
+  )
+```
+
+The filter is not driven by one sequencing batch: all four dropped loci are
+elevated in both, at 2-4x the batch's own panel mean (L1306 1.03/1.04, L1813
+1.49/1.56, L663 1.40/1.38, L473 1.32/0.90 for 705/605, against panel means of
+0.38 and 0.42).
+
+The loci dropped for excess heterozygosity, with the ones just below the
+threshold for comparison. `excess_site_frac` and `het_density` are small
+fractions, so these are shown as percentages:
+
+```{r}
+per_locus |>
+  filter(!is.na(n_excess_sites)) |>
+  mutate(
+    pct_excess_sites = 100 * excess_site_frac,
+    pct_max_site_het = 100 * max_site_het_frac,
+    pct_het_density = 100 * het_density
+  ) |>
+  select(locus, stage, length, n_sites_het_scored, n_excess_sites,
+         pct_excess_sites, pct_max_site_het, pct_het_density) |>
+  arrange(desc(n_excess_sites)) |>
+  head(15) |>
+  qc_gt()
+```
+
+## Allele balance
+
+Step 6 of 02b sets a heterozygous genotype to missing when its allele balance,
+AO / (AO + RO), falls outside 0.25-0.75. The filtered VCFs cannot show what that
+removed, because a blanked genotype looks like any other missing one, so script
+04h replays the 02b filter chain on the raw VCFs and records every het that
+reaches step 6. It reproduces the filtered VCFs exactly (checked position by
+position for one sample: every 'kept' and 'exempt' het is a het there, every
+'blanked' one is missing).
+
+Allele balance is a ratio, so unlike the depth figures above it does not depend
+on where in the locus a site sits. Everything below is restricted to the retained
+samples.
+
+```{r}
+ab_all <- het_ab |>
+  filter(sample %in% sample_final$sample) |>
+  left_join(select(per_locus, locus, stage, retained_final), by = "locus")
+
+ab_final <- ab_all |> filter(retained_final)
+ab_eval <- ab_final |> filter(status != "exempt")
+
+ab_final |>
+  count(status) |>
+  mutate(pct = 100 * n / sum(n)) |>
+  qc_gt(title = "Het genotypes at the allele-balance step, retained loci")
+
+ab_exempt <- ab_final |>
+  filter(status == "exempt") |>
+  mutate(reason = case_when(
+    is.na(ao) ~ "no AO reported",
+    ro == 0 ~ "RO = 0 (split multiallelic)",
+    .default = "AO + RO off DP by > 2 reads"
+  )) |>
+  count(reason) |>
+  mutate(pct = 100 * n / sum(n)) |>
+  arrange(desc(n))
+
+ab_exempt |> qc_gt(title = "Why exempt hets were not evaluated")
+```
+
+'Exempt' hets are on records where AO + RO differs from DP by more than 2 reads
+(`--ab_tol`), which 02b skips on purpose: after multiallelic splitting, one half
+of a real 1/2 genotype shows no reference reads and would otherwise be thrown
+out. That case is
+`r sprintf("%.0f%%", ab_exempt$pct[ab_exempt$reason == "RO = 0 (split multiallelic)"])`
+of exempt hets, and in total the filter does not look at
+`r sprintf("%.1f%%", 100 * mean(ab_final$status == "exempt"))` of hets.
+
+### Distribution
+
+```{r}
+ab_eval |>
+  ggplot(aes(x = ab, fill = status)) +
+  geom_histogram(binwidth = 0.02, boundary = 0, color = "black", linewidth = 0.2) +
+  geom_vline(xintercept = c(0.25, 0.75), linetype = "dashed") +
+  labs(
+    title = "Allele balance of het genotypes before the filter",
+    x = "Allele balance, AO / (AO + RO)",
+    y = "Frequency (het genotypes)",
+    fill = NULL
+  ) +
+  scale_fill_manual(values = c(kept = "steelblue", blanked = "grey70")) +
+  scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+ab_eval |>
+  mutate(depth = cut(dp, c(0, 10, 20, 40, 80, Inf),
+                     labels = c("5-10", "11-20", "21-40", "41-80", "> 80"))) |>
+  summarize(
+    n_het = n(),
+    median_ab = median(ab),
+    pct_below_0.35 = 100 * mean(ab < 0.35),
+    pct_above_0.65 = 100 * mean(ab > 0.65),
+    pct_blanked = 100 * mean(status == "blanked"),
+    .by = depth
+  ) |>
+  arrange(depth) |>
+  qc_gt(title = "Evaluated hets by genotype depth, retained loci")
+```
+
+The distribution has a single mode at 0.5 and leans to the reference side:
+`r sprintf("%.1f%%", 100 * mean(ab_eval$ab < 0.35))` of hets are below 0.35
+against `r sprintf("%.1f%%", 100 * mean(ab_eval$ab > 0.65))` above 0.65. That
+is the usual reference bias of mapping to a reference, which favors reads that
+match it, and it is strongest at moderate depth. There is no second mode near
+0.25, so paralogs are not a problem at the level of the whole data set; they show
+up per locus (below). Overall, the filter removes
+`r sprintf("%.1f%%", 100 * mean(ab_eval$status == "blanked"))` of evaluated hets.
+
+### Per sample
+
+```{r}
+ab_sample <- ab_final |>
+  summarize(
+    n_het = n(),
+    n_evaluated = sum(status != "exempt"),
+    pct_blanked = 100 * sum(status == "blanked") / n_evaluated,
+    pct_exempt = 100 * mean(status == "exempt"),
+    median_ab = median(ab, na.rm = TRUE),
+    pct_below_0.35 = 100 * mean(ab < 0.35, na.rm = TRUE),
+    pct_above_0.65 = 100 * mean(ab > 0.65, na.rm = TRUE),
+    .by = sample
+  ) |>
+  left_join(
+    select(sample_final, sample, species, seq_batch, mean_dp, n_transitions, n_singletons),
+    by = "sample"
+  )
+
+ab_sample |>
+  ggplot(aes(x = pct_blanked, fill = seq_batch)) +
+  geom_histogram(binwidth = 0.5, color = "black") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Share of evaluated hets blanked by the allele-balance filter",
+    x = "Percentage of evaluated het genotypes blanked",
+    y = "Frequency (samples)",
+    fill = "Batch"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+ab_sample |>
+  arrange(desc(pct_blanked)) |>
+  head(8) |>
+  select(sample, species, seq_batch, n_evaluated, pct_blanked, median_ab,
+         pct_below_0.35, pct_above_0.65, mean_dp, n_transitions, n_singletons) |>
+  qc_gt(title = "Samples with the most hets blanked")
+```
+
+The typical sample loses `r sprintf("%.1f%%", median(ab_sample$pct_blanked))` of
+its evaluated hets (IQR
+`r sprintf("%.1f-%.1f%%", quantile(ab_sample$pct_blanked, 0.25), quantile(ab_sample$pct_blanked, 0.75))`),
+and the share is unrelated to depth (r =
+`r round(cor(ab_sample$pct_blanked, ab_sample$mean_dp), 2)`). The samples well
+above that come in two kinds:
+
+- **Widened balance: I1768, I1670, I1684.** About a fifth of their hets are
+  blanked, and their median balance is still close to 0.5. For I1768 and I1670
+  both ends of the window lose hets about equally; I1684 loses more on the low
+  side. Depth is not low (I1684 has the second-highest in the panel), and
+  duplication, error rate, and insert size are ordinary. What the three share is
+  a low variant count: they are among the samples with the
+  fewest transitions and have very few singletons. A second DNA source would
+  skew balance to one side, which the first two do not show, and the cause is
+  not clear from the metrics in this report.
+- **Skewed low: I1495, I1517, and less strongly I1624 and I1507.** The first two
+  have a median balance below 0.4 with about 40% of their hets under 0.35; I1624
+  and I1507 are at 0.43-0.44 with a quarter of their hets under 0.35. That is what
+  a minor second source of DNA does: the contaminant's alleles appear as hets
+  supported by a minority of reads. All four have more singletons than the median
+  sample (`r median(sample_final$n_singletons)`), and three of them also fail sex
+  calling (see *Samples to watch*). None is among the samples flagged as
+  contaminated in the metadata.
+
+### Per locus
+
+Pooling all hets at a locus lets a few low-coverage samples dominate its share of
+blanked hets, so loci are scored per sample instead. For each sample with at least
+5 evaluated hets at a locus, the locus is 'skewed' in that sample if the median
+balance is below 0.4. A collapsed paralog should be skewed in most samples that
+are heterozygous there; a locus with a few noisy samples should not.
+
+```{r}
+min_ab_hets <- 5
+min_ab_samples <- 20
+ab_skew_cutoff <- 0.4
+max_ab_skew_frac <- 0.5
+
+ab_locus <- ab_all |>
+  filter(status != "exempt") |>
+  summarize(n_het = n(), median_ab = median(ab), .by = c(locus, stage, sample)) |>
+  filter(n_het >= min_ab_hets) |>
+  summarize(
+    n_samples = n(),
+    n_skewed = sum(median_ab < ab_skew_cutoff),
+    pct_skewed = 100 * n_skewed / n_samples,
+    .by = c(locus, stage)
+  ) |>
+  filter(n_samples >= min_ab_samples) |>
+  left_join(
+    ab_all |>
+      filter(status != "exempt") |>
+      summarize(n_het = n(), median_ab = median(ab),
+                pct_blanked = 100 * mean(status == "blanked"), .by = locus),
+    by = "locus"
+  ) |>
+  left_join(select(per_locus, locus, mean_dp, n_excess_sites), by = "locus")
+
+# Pull one value for one locus, for the text
+ab_l <- function(l, col) ab_locus[[col]][ab_locus$locus == l]
+
+ab_locus |>
+  summarize(
+    n_loci = n(),
+    median_pct_skewed = median(pct_skewed),
+    max_pct_skewed = max(pct_skewed),
+    .by = stage
+  ) |>
+  arrange(desc(median_pct_skewed)) |>
+  qc_gt(title = paste0("Share of samples in which a locus is skewed, by locus fate (loci with >= ",
+                       min_ab_samples, " counted samples)"))
+
+ab_locus |>
+  mutate(set = case_when(
+    stage %in% c("retained", "dropped: allele balance") ~ stage,
+    .default = "dropped: other"
+  )) |>
+  ggplot(aes(x = pct_skewed, fill = set)) +
+  geom_histogram(binwidth = 2.5, boundary = 0, color = "black") +
+  # The 04c cutoff (`max_ab_skew_frac`)
+  geom_vline(xintercept = 100 * max_ab_skew_frac, linetype = "dashed") +
+  labs(
+    title = "Share of samples in which a locus has skewed allele balance",
+    subtitle = paste0("Median balance < ", ab_skew_cutoff, " among samples with >= ",
+                      min_ab_hets, " evaluated hets; loci with >= ",
+                      min_ab_samples, " counted samples"),
+    x = "Percentage of samples skewed",
+    y = "Frequency (loci)",
+    fill = NULL
+  ) +
+  scale_fill_manual(values = c(
+    retained = "steelblue",
+    `dropped: allele balance` = "firebrick",
+    `dropped: other` = "grey70"
+  )) +
+  scale_y_continuous(
+    transform = "log1p",
+    breaks = c(0, 1, 3, 10, 30, 100, 300),
+    expand = expansion(mult = c(0, 0.1))
+  )
+
+ab_locus |>
+  arrange(desc(pct_skewed)) |>
+  head(15) |>
+  qc_gt(title = "Loci skewed in the largest share of samples")
+```
+
+Loci that 04b dropped as Z paralogs or gametologs, which this measure did not
+select, also sit at the top, and the typical retained locus is skewed in
+`r sprintf("%.0f%%", median(ab_locus$pct_skewed[ab_locus$stage == "retained"]))`
+of samples, with 99% of retained loci at or below
+`r sprintf("%.0f%%", quantile(ab_locus$pct_skewed[ab_locus$stage == "retained"], 0.99))`.
+
+**L1826 is dropped by the allele-balance test alone.** It is skewed in
+`r sprintf("%.0f%%", ab_l("L1826", "pct_skewed"))` of
+`r ab_l("L1826", "n_samples")` samples, alongside L1839 (dropped as a Z paralog,
+`r sprintf("%.0f%%", ab_l("L1839", "pct_skewed"))`) and L1813 (dropped for excess
+heterozygosity, `r sprintf("%.0f%%", ab_l("L1813", "pct_skewed"))`). Like those
+two, it has about twice the depth of a typical long locus
+(`r round(ab_l("L1826", "mean_dp"), 0)`x, against a long-class median of
+`r round(median(probe_dp$mean_dp[probe_dp$probe_class == "long"]), 0)`x), and its
+`r ab_l("L1826", "n_excess_sites")` excess-het sites are too few for the
+excess-het test. Balance near 0.25-0.35 at the same sites across dozens of
+samples is what one variable copy of two looks like.
+
+L10 is the most skewed retained locus
+(`r sprintf("%.0f%%", ab_l("L10", "pct_skewed"))` of
+`r ab_l("L10", "n_samples")` samples), but its depth is ordinary for a short
+locus and it has no excess-het sites.
+
+## Locus informativeness
+
+The per-sample genotype counts in 05c measure how far each sample sits from the
+reference, which says nothing about whether a locus separates the samples from
+each other.
+Script 04e counts, over the `r nrow(sample_final)` retained samples, the sites
+that are variable among them and the subset that are parsimony-informative ---
+where each of the two alleles is carried by at least two samples, so the site can
+support a grouping.
+
+```{r}
+locus_final |>
+  summarize(
+    across(c(n_sites_scored, n_variable, n_pi, n_singleton), sum)
+  ) |>
+  mutate(
+    pct_variable = 100 * n_variable / n_sites_scored,
+    pct_pi = 100 * n_pi / n_sites_scored
+  ) |>
+  qc_gt()
+```
+
+```{r}
+locus_final |>
+  ggplot(aes(x = n_pi)) +
+  geom_histogram(binwidth = 5, fill = "steelblue", color = "black") +
+  labs(
+    title = "Parsimony-informative sites per locus",
+    x = "Number of parsimony-informative sites",
+    y = "Frequency (loci)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+locus_final |>
+  ggplot(aes(x = 100 * prop_pi)) +
+  geom_histogram(binwidth = 0.25, fill = "steelblue", color = "black") +
+  labs(
+    title = "Density of parsimony-informative sites per locus",
+    x = "Percentage of scored sites that are parsimony-informative",
+    y = "Frequency (loci)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# Longer loci carry more informative sites simply by being longer; loci far below
+# the trend are conserved rather than badly sequenced
+locus_final |>
+  ggplot(aes(x = length, y = n_pi, color = mean_dp)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  scale_color_viridis_c() +
+  labs(
+    title = "Locus length vs. informative sites",
+    x = "Locus length (bp)",
+    y = "Number of parsimony-informative sites",
+    color = "Depth"
+  )
+```
+
+## Heterozygosity per sample
+
+Heterozygosity is the readout the downstream comparisons in 05c are built on, so
+it is worth checking here that it is not being set by depth instead of by
+biology. At low depth one allele of a true heterozygote can go unobserved, and
+the genotype is then called homozygous --- allele dropout, which biases
+heterozygosity down exactly where coverage is worst.
+
+```{r}
+het_per_sample <- all_final |>
+  filter(genotype == "n_het") |>
+  # Mean of per-locus percentages, as in 05c; 05a's `het_pct_final` pools sites
+  # across loci instead, so it weights long loci more. NA where a locus is
+  # uncalled in this sample
+  summarize(pct_het = mean(geno_pct, na.rm = TRUE), .by = sample) |>
+  left_join(sample_final, by = "sample")
+
+het_per_sample |>
+  ggplot(aes(x = pct_het, fill = sex)) +
+  geom_histogram(binwidth = 0.02, color = "black", show.legend = FALSE) +
+  # Stacking hides the shape of the smaller group, and the two are expected to
+  # differ here, so each sex gets its own panel with a free y axis
+  facet_wrap(vars(sex), ncol = 1, scales = "free_y") +
+  labs(
+    title = "Heterozygosity per sample",
+    x = "Percentage of called sites that are heterozygous",
+    y = "Frequency (samples)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+The two panels look the same, which is the point: with `z_policy=all` every
+sex-linked locus is already gone, so female hemizygosity can no longer depress
+female heterozygosity. Medians are 0.44% for females against 0.49% for males
+across the whole panel, and 0.47% vs 0.49% within *B. jararaca* --- the residual
+gap is the species composition, not the sex.
+
+Both panels are bimodal in the same place, and the split follows species and
+locality, not sex. The low cluster is every non-*jararaca* sample (medians
+0.12-0.24%, all 20 of them below 0.40%) plus 29 *jararaca*; the high cluster is
+*jararaca* only. Within *jararaca*, heterozygosity varies with sampling locality
+(see *Heterozygosity and sequencing batch*).
+
+```{r}
+het_per_sample |>
+  summarize(
+    n = n(),
+    median_pct_het = median(pct_het),
+    min = min(pct_het),
+    max = max(pct_het),
+    .by = species
+  ) |>
+  arrange(median_pct_het) |>
+  qc_gt(digits = 3)
+```
+
+Either slope is a warning, and they mean opposite things. Rising with depth
+points to allele dropout, heterozygosity being lost where coverage is thin.
+Falling with depth points the other way: whatever inflates heterozygosity in
+these samples is concentrated in the ones that sequenced worst, which is the
+pattern a mixed or contaminated sample produces. Either way a comparison between
+groups that differ in depth is confounded.
+
+```{r}
+het_per_sample |>
+  ggplot(aes(x = mean_dp, y = pct_het, color = species)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  labs(
+    title = "Depth vs. heterozygosity",
+    x = "Mean depth of coverage",
+    y = "Percentage of called sites that are heterozygous",
+    color = "Species"
+  ) +
+  theme(legend.text = element_text(face = "italic"))
+```
+
+### Heterozygosity and sequencing batch
+
+Within *B. jararaca*, heterozygosity and singleton counts are higher in the 605
+batch, which is also deeper, so this has the shape of an allele-dropout artifact.
+It is not one: within *jararaca*, depth barely correlates with heterozygosity,
+and the difference follows sampling locality, which is confounded with batch
+(RS, RJ and PR are almost entirely 705; SC and ES mostly 605). Adding batch on
+top of `state` explains nothing further, while depth and missingness keep a
+strong batch effect after conditioning on state. The *state* comparison in 05c
+therefore needs the most care.
+
+```{r}
+het_per_sample |>
+  filter(species == "jararaca") |>
+  summarize(
+    n = n(),
+    pct_het = mean(pct_het),
+    mean_dp = mean(mean_dp),
+    n_singletons = mean(n_singletons),
+    .by = c(state, seq_batch)
+  ) |>
+  arrange(state, seq_batch) |>
+  qc_gt(digits = 3, title = "B. jararaca by state and batch", full_width = TRUE)
+```
+
+Sex calls and locus filters are not affected: the Z:autosome depth ratio is a
+within-sample ratio and matches between batches, and the per-locus ordering of
+heterozygosity and missingness is preserved across batches.
+
+## Variant quality per sample
+
+Real SNPs have a transition:transversion ratio of ~2, whereas random calls have 0.5.
+
+```{r}
+sample_final |>
+  ggplot(aes(x = ts_tv)) +
+  geom_histogram(binwidth = 0.01, fill = "steelblue", color = "black") +
+  geom_vline(xintercept = 2, linetype = "dashed", color = "grey40") +
+  labs(
+    title = "Ts/Tv ratio per sample",
+    x = "Transitions / transversions",
+    y = "Frequency (samples)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+
+# A ratio that falls away at low depth is the signature of depth-driven noise
+sample_final |>
+  ggplot(aes(x = mean_dp, y = ts_tv)) +
+  geom_point(alpha = 0.7, size = 2.5, color = "steelblue") +
+  geom_hline(yintercept = 2, linetype = "dashed", color = "grey40") +
+  labs(
+    title = "Depth vs. Ts/Tv",
+    x = "Mean depth of coverage",
+    y = "Transitions / transversions"
+  )
+```
+
+Private alleles are the other signature of contamination, so a sample far above
+its peers is worth a look even when its Ts/Tv is normal. Read them next to
+missingness: a sample with more sites called than its peers has more opportunity
+to carry a private allele, so the count is not purely a contamination signal.
+
+```{r}
+sample_final |>
+  ggplot(aes(x = n_singletons)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "black") +
+  labs(
+    title = "Singleton (private) variants per sample",
+    x = "Number of singletons",
+    y = "Frequency (samples)"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+```
+
+### The singleton outlier: I20937
+
+```{r}
+# Values for the text below and in 'Samples to watch'
+sv <- function(s, col) sample_final[[col]][sample_final$sample == s]
+b705 <- filter(sample_final, seq_batch == "705_H2HLLBCXY")
+```
+
+I20937 has `r format(sv("I20937", "n_singletons"), big.mark = ",")` singletons
+against a median of `r median(sample_final$n_singletons)` ---
+`r sprintf("%.1f%%", 100 * sv("I20937", "n_singletons") / sum(sample_final$n_singletons))`
+of every singleton site in the data set, from one of `r nrow(sample_final)`
+samples. It is the only *B. jabrensis* in the panel, so every difference from the
+other species appears as a singleton. Being the only sample of its species is not
+enough on its own: *B. germanoi* (I1773) is also n = 1 but has
+`r sv("I1773", "n_singletons")` singletons, so divergence from *B. jararaca*, on
+which the probes were designed, matters.
+
+```{r}
+sample_final |>
+  summarize(
+    n_samples = n(),
+    median_singletons = median(n_singletons),
+    median_pct_on_target = median(pct_on_target),
+    median_enrichment = median(enrichment),
+    .by = species
+  ) |>
+  arrange(desc(median_singletons)) |>
+  qc_gt()
+```
+
+It does not look contaminated: heterozygosity is among the lowest in the panel
+(`r sprintf("%.2f%%", het_per_sample$pct_het[het_per_sample$sample == "I20937"])`
+vs a median of `r sprintf("%.2f%%", median(het_per_sample$pct_het))`) and Ts/Tv is
+normal (`r round(sv("I20937", "ts_tv"), 2)`). Capture is typical for its batch
+(705: `r round(sv("I20937", "pct_on_target"), 1)`% on target, rank
+`r rank(b705$pct_on_target)[b705$sample == "I20937"]` of `r nrow(b705)`), but its
+error rate (`r signif(sv("I20937", "error_rate"), 3)`) and missingness
+(`r sprintf("%.1f%%", sv("I20937", "mean_pct_N_final"))`) are the highest in the
+panel, consistent with reads diverging from the reference. Usable, but expect it
+to look artificially diverged and homozygous against the *jararaca* bulk.
+
+## Samples to watch
+
+Every section above flags its own outliers. This pulls them into one list, so
+that a sample failing on several counts is visible as such rather than appearing
+once in each table. The thresholds are deliberately loose --- this is a list to
+look at, not a filter.
+
+The quantiles are taken **within** each sequencing batch. Panel-wide thresholds
+cut the tail of a bimodal distribution instead of finding outliers, so they
+mostly selected a batch: of the seven samples flagged for low depth all seven
+were 705, of the seven flagged for high duplication all seven were 605, and the
+singleton and Ts/Tv flags went 6 of 7 to 605. A within-batch quantile asks the
+question that was meant --- whether a sample is unusual next to the samples it
+was sequenced with.
+
+```{r}
+flags <- sample_final |>
+  left_join(select(ab_sample, sample, pct_blanked, median_ab), by = "sample") |>
+  mutate(
+    `low depth` = mean_dp < quantile(mean_dp, 0.05),
+    `high missingness` = mean_pct_N_final > quantile(mean_pct_N_final, 0.95),
+    `low Ts/Tv` = ts_tv < quantile(ts_tv, 0.05),
+    `many singletons` = n_singletons > quantile(n_singletons, 0.95),
+    `high duplication` = pct_duplication > quantile(pct_duplication, 0.95),
+    `low mapping` = pct_mapped < quantile(pct_mapped, 0.05),
+    # From the allele-balance section: many hets outside the 02b window, and a
+    # balance skewed toward the reference, the signature of a second DNA source
+    `many hets blanked` = pct_blanked > quantile(pct_blanked, 0.95),
+    `low allele balance` = median_ab < quantile(median_ab, 0.05),
+    .by = seq_batch
+  ) |>
+  # Not batch-relative: the confidence flag comes from 04b, which already
+  # z-scores within the assigned sex group
+  mutate(`sex not confident` = !sex_confident) |>
+  mutate(n_flags = rowSums(pick(`low depth`:`sex not confident`)))
+
+watch <- flags |>
+  filter(n_flags >= 2) |>
+  arrange(desc(n_flags))
+
+# Low allele balance against sex-call confidence, for the text below
+ab_sex <- with(flags, table(
+  low_ab = factor(`low allele balance`, levels = c(FALSE, TRUE)),
+  not_confident = factor(`sex not confident`, levels = c(FALSE, TRUE))
+))
+ab_sex_p <- fisher.test(ab_sex)$p.value
+
+watch |>
+  select(sample, species, seq_batch, n_flags, mean_dp, mean_pct_N_final, ts_tv,
+         n_singletons, pct_duplication, pct_mapped, pct_blanked, median_ab) |>
+  qc_gt()
+```
+
+Which checks each listed sample failed:
+
+```{r}
+watch |>
+  select(sample, n_flags, `low depth`:`sex not confident`) |>
+  pivot_longer(!c(sample, n_flags), names_to = "check") |>
+  filter(value) |>
+  summarize(failed = paste(check, collapse = ", "), .by = c(sample, n_flags)) |>
+  arrange(desc(n_flags)) |>
+  qc_gt(full_width = TRUE)
+```
+
+The two allele-balance flags and the sex-calling flag keep landing on the same
+samples, and they are measured independently: allele balance on the autosomal
+loci, sex from Z depth and Z heterozygosity. Of the `r sum(ab_sex["TRUE", ])`
+samples with low median allele balance for their batch,
+`r ab_sex["TRUE", "TRUE"]` are also 'sex not confident', against
+`r ab_sex["FALSE", "TRUE"]` of the other `r sum(ab_sex["FALSE", ])` (Fisher's
+exact test, p = `r format(signif(ab_sex_p, 1), scientific = TRUE)`). How they fail is consistent with a
+second source of DNA:
+
+- **I1495 and I1507** are females whose Z depth ratio is well above the female
+  norm (`r round(sv("I1495", "z_depth_ratio"), 2)` and
+  `r round(sv("I1507", "z_depth_ratio"), 2)`, against a female median of
+  `r round(median(sample_final$z_depth_ratio[sample_final$sex == "female"]), 2)`),
+  which is what reads from a male would add.
+- **I1624** is a male flagged on both its depth ratio and its heterozygous
+  gametolog sites.
+- **I1671** fits the same pattern more weakly: a female with a raised depth ratio
+  (`r round(sv("I1671", "z_depth_ratio"), 2)`) and low balance for its batch.
+- Among females, the three with the lowest allele balance --- I1495, I1507, and
+  I1520 --- have three of the four highest Z het densities, all above the 95th
+  percentile for females. A ZW female should have essentially no Z
+  heterozygosity.
+
+None of these samples is among those flagged as contaminated in the metadata.
+I1495, I1507, and I1624, and I1517 on allele balance alone, are the ones to
+check first. The three samples with the most hets blanked (I1768, I1670, I1684)
+are not low in allele balance and have confident sex calls, and their balance is
+centered on 0.5, so they do not share this pattern.
+
+## Metadata-flagged samples
+
+The `r n_contam` samples flagged as contaminated in the metadata were removed in
+03c, before any locus filter, and their stats come from side runs (step 4I).
+Singleton counts and sex-call confidence depend on which samples are scored
+together, so in this section both groups take them from the 4I runs, which
+scored all `r nrow(vcf_stats_flagged)` samples together; elsewhere in this report
+the retained samples' values come from runs without the flagged samples. A
+second DNA source should show as a lower median allele balance, more hets below
+0.35, and more sex calls that are not confident.
+
+```{r}
+# Heterozygosity is 05a's pooled `het_pct_final` here, since `all_final` only
+# holds the retained samples
+flagged_cmp <- per_sample |>
+  filter(retained | contam %in% TRUE) |>
+  mutate(group = ifelse(retained, "retained", "flagged")) |>
+  select(!c(n_singletons, sex_confident)) |>
+  left_join(select(vcf_stats_flagged, sample, n_singletons), by = "sample") |>
+  left_join(transmute(sex_flagged, sample, sex_confident = confident == "yes"),
+            by = "sample")
+
+flagged_cmp |>
+  summarize(
+    n = n(),
+    across(c(mean_dp, mean_pct_N_final, het_pct_final, ab_median,
+             ab_pct_below_0.35, ab_pct_blanked, n_singletons, ts_tv),
+           \(x) median(x, na.rm = TRUE)),
+    pct_sex_not_confident = 100 * mean(!sex_confident, na.rm = TRUE),
+    .by = group
+  ) |>
+  qc_gt(title = "Medians, flagged vs. retained samples", full_width = TRUE)
+
+flagged_cmp |>
+  ggplot(aes(x = ab_median, y = het_pct_final, color = group)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  scale_color_brewer(palette = "Set1") +
+  labs(
+    title = "Allele balance vs. heterozygosity",
+    x = "Median allele balance of evaluated hets",
+    y = "Percentage of called sites that are heterozygous",
+    color = NULL
+  )
+```
+
+`r n_low_ab_flagged` of the `r n_contam` flagged samples have a median allele
+balance below `r ab_low`, against `r n_low_ab_retained` of the
+`r nrow(sample_final)` retained samples. The flagged samples with low balance or
+a sex call that is not confident are below. Most of the second kind combine a
+balance of exactly 0.5 with very few hets and a lot of missing data. Across all
+flagged samples,
+`r sum(flagged_cmp$group == "flagged" & flagged_cmp$mean_pct_N_final > 10)` of
+`r n_contam` have more than 10% missing data over the final loci, so the
+missingness filter would likely have removed them anyway.
+
+```{r}
+flagged_cmp |>
+  filter(group == "flagged", ab_median < ab_low | !sex_confident) |>
+  select(sample, species, seq_batch, mean_dp, mean_pct_N_final, het_pct_final,
+         ab_median, ab_pct_below_0.35, n_singletons, sex_confident) |>
+  arrange(ab_median) |>
+  qc_gt(digits = 3)
+```
+
+<details><summary>R session info</summary>
+
+```{r}
+#| echo: true
+sessionInfo()
+```
+
+</details>

@@ -139,6 +139,14 @@ for produced in "$tmp_out"/*.fa "$tmp_out"/locus_name_map.tsv; do
 done
 shopt -u nullglob
 
+# Copy Slurm output file to the logs directory
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    slurm_file="slurm-${SLURM_JOB_NAME}-${SLURM_JOB_ID}.out"
+    if [[ -f "$slurm_file" ]]; then
+        cp "$slurm_file" "$output_dir"/logs/ 2>/dev/null || true
+    fi
+fi
+
 # Report
 echo "Done"
 date

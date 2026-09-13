@@ -12,7 +12,7 @@ save_mapped: false
 save_output_as_bam: true
 
 # Intervals BED file
-intervals: 'results/blast_probes/probes_1000bp-buffer.bed'
+intervals: 'results/blast_probes/probes_300bp-buffer.bed'
 
 # ==============================================================================
 #                             TOOL PARAMETERS
