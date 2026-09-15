@@ -28,7 +28,7 @@ fqdir=data/fastq
 ref=data/ref/binsu_all.fna
 bed=results/blast_probes/probes_"$buffer_size"bp-buffer.bed
 samplesheet=config/nfc-sarek_samplesheet.csv
-kept_bed=results/stats/locus_filtering/retained_loci.bed
+kept_bed=results/stats/locus_filt/kept_loci.bed
 ```
 
 --------------------------------------------------------------------------------
@@ -115,19 +115,6 @@ bcftools query -f '[%GQ\n]' "$vcf" | head # must show numbers, not `.`
 
 ### B) Collect the Sarek mapping and coverage stats into one table
 
-These are what explain a low-depth sample later on: read count, mapping
-rate, duplicate rate, and how much of the sequencing landed on the probes.
-
-- mosdepth was run over the genome in 500 bp windows rather than over the
-  probe intervals, so the script intersects those windows with `--bed` to get
-  `pct_on_target`, `target_mean_dp` and `enrichment`.
-- `target_mean_dp` is not the same as 04a's `mean_dp`: this one averages over
-  every target position including the uncovered ones, 04a averages FORMAT/DP
-  over the sites where a genotype was called.
-- This runs on all 191 samples. The 52 flagged as contaminated are removed by
-  03c before any locus is judged; their other per-sample metrics come from
-  step 4I.
-
 ```bash
 sbatch scripts/02c_sarek-stats.sh \
     --sarek_dir results/nfc-sarek \
@@ -175,7 +162,7 @@ This reads the run and flowcell out of the first read name of each R1 FASTQ file
 ```bash
 sbatch scripts/02d_seq-batch.sh --fastq_dir data/fastq -o results/stats/seq_batch
 #> 95 samples on run 605 (flowcell HCTGLBCXX), 96 on run 705 (H2HLLBCXY)
-#> Of the 125 retained: 68 on 605, 57 on 705
+#> Of the 121 retained: 66 on 605, 55 on 705
 #> 605 averages 18.8% of bases on target vs 10.2% for 705, i.e. ~2x the depth
 #> per read; 705 was sequenced ~30% deeper, which partly offsets this
 ```
@@ -216,7 +203,8 @@ echo "# Loci that failed ClipKit: $(grep -c . "$clipkit_failed")" # 34
 ### C) Filter samples and loci with too much missing data (N)
 
 Produces filtered FASTA and VCF files,
-and removes the samples flagged as possible contaminants by Felipe.
+and removes the samples flagged as possible contaminants by Felipe,
+plus four more that look contaminated in the QC report (05b, *Samples to watch*).
 The flagged samples are removed here so they cannot later influence a locus filter
 or any statistic pooled over samples.
 Their per-sample stats are computed separately in step 4I.
@@ -225,26 +213,30 @@ Their per-sample stats are computed separately in step 4I.
 # Make a list of the samples (52/191) flagged as contaminated in the metadata file:
 awk -F'\t' '$6 == "TRUE" {print $1}' metadata/metadata-final.tsv > metadata/contam_samples.txt
 
+# Four more samples look contaminated in the QC report: low allele balance and many
+# hets blanked, and for all but I1517 a sex call that is not confident
+printf '%s\n' I1495 I1507 I1517 I1624 > metadata/contam_samples_qc.txt
+
+# All samples to remove a priori (56/191):
+cat metadata/contam_samples.txt metadata/contam_samples_qc.txt > metadata/remove_samples.txt
+
 # Run the filter-loci script
 sbatch scripts/03c_filter-loci.sh \
     --fasta_dir_in results/seq/clipped \
     --vcf_dir_in results/consensus_init/vcf \
     --fasta_dir_out results/seq/filt \
     --vcf_dir_out results/vcf/filt \
-    --stats_dir results/stats/locus_filtering \
+    --stats_dir results/stats/locus_filt \
     --max_missing_sample "$max_missing_sample" \
     --max_missing_locus "$max_missing_locus" \
     --min_locus_length "$min_locus_length" \
-    --remove_samples metadata/contam_samples.txt
-
-#> Filtering samples with mean missingness >10%...: Kept samples: 125 // removed samples: 14
-#> Filtering loci with mean missingness >20% or length <150 bp...:  Kept loci: 1762 // removed loci: 57
+    --remove_samples metadata/remove_samples.txt
 ```
 
 ### D) Tabulate the ClipKIT trimming per locus
 
 ```bash
-sbatch scripts/03d_clipkit-stats.sh --clipped_dir results/seq/clipped -o results/stats/locus_filtering
+sbatch scripts/03d_clipkit-stats.sh --clipped_dir results/seq/clipped -o results/stats/locus_filt
 #> Mean 29.1% of each alignment trimmed; 38 loci trimmed by >75%
 ```
 
@@ -351,9 +343,9 @@ sbatch scripts/04c_filter-excess-het.sh \
     --min_ab_samples "$min_ab_samples" \
     --max_ab_skew_frac "$max_ab_skew_frac"
 
-# Check which loci were dropped, and reconsider the thresholds if needed:
+# Check which loci were dropped:
 cat results/stats/excess_het/excess_het_loci.txt # L1306, L1813, L473, L663
-cat results/stats/excess_het/ab_skew_loci.txt
+cat results/stats/excess_het/ab_skew_loci.txt # L1813 L1826 L473 - 2 of these (L1813, L473) are already dropped for excess het, so only L1826 is dropped for AB alone (unchanged)
 ```
 
 ### E) Create a combined multi-sample VCF by merging single-sample VCFs
@@ -373,9 +365,6 @@ sbatch scripts/04e_locus-informativeness.sh \
     --bed results/stats/excess_het/retained_loci_final.bed \
     -o results/stats/informativeness \
     --min_call_frac "$min_call_frac"
-
-#> 1.62M scored sites: 6.47% variable, 4.28% parsimony-informative
-#> Mean 41 informative sites per locus (across all samples); only 1 locus (L379) has none
 ```
 
 ### G) Per-sample Ts/Tv and singleton counts from the merged VCF
@@ -384,8 +373,6 @@ Ts/Tv to check for noise: real SNPs should be about 2, random calls about 0.5.
 
 ```bash
 sbatch scripts/04f_vcf-stats.sh --vcf "$merged_vcf" -o results/stats/vcf_tstv
-#> Ts/Tv 1.90-2.11 across the 125 samples (mean 2.012)
-#> Singletons average 289/sample; I20937 has 3,587
 ```
 
 ### H) Depth against distance from the capture-probe edge
@@ -405,11 +392,11 @@ sbatch scripts/04g_depth-profile.sh \
 
 ### I) Per-sample stats for the flagged contaminant samples
 
-03c removes the 52 flagged samples before any locus is judged, which leaves them
+03c removes the 56 flagged samples before any locus is judged, which leaves them
 without most per-sample stat -- so those stats are computed here.
 
 ```bash
-flagged=metadata/contam_samples.txt   # Written in 3C
+flagged=metadata/remove_samples.txt   # Written in 3C
 
 # Genotypes, depth and missingness per locus (04a)
 while read -r smp; do
@@ -436,10 +423,6 @@ for vcf in results/nfc-sarek/variant_calling/freebayes/*/*.freebayes.vcf.gz; do
         -o results/stats/allele_balance_flagged
 done
 
-# Check that all flagged samples have tables before continuing:
-ls results/stats/vcf_qc_flagged/*_counts-per-locus.tsv | wc -l # 52
-ls results/stats/allele_balance_flagged/*_ab-summary.tsv | wc -l # 52
-
 # Sex calls (04b), scored together with the retained samples
 qc_with_flagged=results/stats/vcf_qc_with-flagged
 mkdir -p "$qc_with_flagged"
@@ -458,9 +441,7 @@ sbatch scripts/04b_sex-and-z-class.sh \
     --min_het_sites "$min_het_sites"
 
 # Ts/Tv and singletons (04d + 04f), from a merged VCF of the retained samples'
-# final VCFs and the flagged samples' unfiltered ones. The flagged VCFs cover
-# every locus, so 04f is restricted to the final loci; outside them, the flagged
-# samples would be the only ones with records and everything would be a singleton.
+# final VCFs and the flagged samples' unfiltered ones.
 vcf_with_flagged=results/vcf/with-flagged
 mkdir -p "$vcf_with_flagged"
 ln -sf "$PWD"/results/vcf/final/*.vcf.gz{,.csi} "$vcf_with_flagged"/
@@ -484,26 +465,13 @@ sbatch scripts/04f_vcf-stats.sh \
 
 ### A) Build the QC summary tables
 
-Reads per-locus counts and depth from 04a, sex and Z locus classes from 04b,
-excess-het and allele-balance locus stats from 04c, per-sample allele balance from
-04h, informativeness counts from 04e, Ts/Tv counts from 04f, mapping stats from
-02c, and filtering and trimming stats from 03c/03d, and writes four tables to
-`results/stats/summaries`. The flagged samples' stats from 4I fill in their own
-rows of the per-sample table and nothing else.
-
 ```bash
 conda activate /fs/ess/PAS0471/jelmer/conda/R
 Rscript scripts/05a_prep-qc-tables.R
 ```
 
-### B) Locus and sample QC report
+### B) Locus and sample QC report, with genotype counts by species and state
 
 ```bash
 quarto render scripts/05b_qc-loci.qmd
-```
-
-### C) Genotype count plots by species, land type, state, and sex
-
-```bash
-quarto render scripts/05c_genotype-counts.qmd
 ```

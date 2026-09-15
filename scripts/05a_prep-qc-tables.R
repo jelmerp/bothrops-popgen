@@ -8,7 +8,7 @@
 #   sample-by-locus-stats.tsv   Long format, one row per sample x locus x metric:
 #                               n_het / n_alt / n_diff as a percentage of called
 #                               sites, n_miss as a percentage of locus length.
-#                               Read by 05b_qc-loci.qmd and 05c_genotype-counts.qmd.
+#                               Read by 05b_qc-loci.qmd.
 #   per-locus-stats.tsv         One row per locus, spanning all loci that entered
 #                               step 3 so that the ones dropped along the way are
 #                               still visible, with a `stage` column saying where
@@ -36,14 +36,16 @@ summary_file <- file.path(outdir, "filtering-summary.tsv")
 # --- Input files
 # Sample metadata (the TSV is the canonical copy -- see run/1_main.md)
 meta_file <- here("metadata/metadata-final.tsv")
+# Samples not flagged in the metadata that look contaminated in 05b (run/1_main.md, 3C)
+qc_contam_file <- here("metadata/contam_samples_qc.txt")
 # Locus filtering stats (script 03c)
-filt_dir <- here("results/stats/locus_filtering")
+filt_dir <- here("results/stats/locus_filt")
 locus_len_file <- file.path(filt_dir, "per_locus_length.tsv")
 locus_miss_file <- file.path(filt_dir, "per_locus_missingness.tsv")
 sample_miss_file <- file.path(filt_dir, "per_sample_mean_missingness.tsv")
 short_loci_file <- file.path(filt_dir, "removed_short_loci.txt")
 removed_samples_file <- file.path(filt_dir, "removed_samples.txt")
-kept_bed_file <- file.path(filt_dir, "retained_loci.bed")
+kept_bed_file <- file.path(filt_dir, "kept_loci.bed")
 # Per-locus genotype counts and depth, one file per sample (script 04a)
 vcf_dir <- here("results/stats/vcf_qc")
 # Sex calls and sex-linked locus classes (script 04b)
@@ -113,8 +115,18 @@ read_lines_or_empty <- function(path) {
 }
 
 # READ INPUT FILES -------------------------------------------------------------
+# `contam` covers both the metadata flag and the samples flagged from the QC
+# report, since 03c removes both; `contam_source` says which
+qc_contam_samples <- read_lines_or_empty(qc_contam_file)
 meta <- read_tsv(meta_file, show_col_types = FALSE) |>
-  mutate(contam = as.logical(contam))
+  mutate(
+    contam = as.logical(contam),
+    contam_source = case_when(
+      contam %in% TRUE ~ "metadata",
+      sample %in% qc_contam_samples ~ "QC"
+    ),
+    contam = contam %in% TRUE | sample %in% qc_contam_samples
+  )
 
 # --- Per-locus genotype counts and depth (04a), one file per sample
 read_counts <- function(files) {
@@ -380,7 +392,7 @@ if (all(c("mean_dp", "target_mean_dp") %in% names(per_sample))) {
 }
 
 # SAMPLE-BY-LOCUS TABLE --------------------------------------------------------
-# Long format, as consumed by 05b and 05c. Loci dropped by 04b/04c are kept and
+# Long format, as consumed by 05b. Loci dropped by 04b/04c are kept and
 # flagged; filter on `retained_final` to get the final data set.
 all <- counts |>
   left_join(

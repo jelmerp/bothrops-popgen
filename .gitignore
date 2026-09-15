@@ -8,3 +8,4 @@ slurm-*
 .DS_Store
 mac-content/
 scripts/old/
+.claude/

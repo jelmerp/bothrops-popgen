@@ -1,3 +1,35 @@
+## 2026-09-13 -- 05c merged into 05b; four more samples excluded
+
+**I1495, I1507, I1517 and I1624 excluded as likely contaminants** (not flagged in
+the metadata). All four have low allele balance and many hets blanked for their
+batch; I1495, I1507 (females, raised Z depth ratio) and I1624 (male) also have a
+sex call that is not confident. Added to 03c's a priori removal via
+`metadata/contam_samples_qc.txt` and treated as flagged contaminants in 4I and 05a.
+Leaves 121 samples (66 on 605, 55 on 705). Pipeline needs a rerun from 3C.
+I1671 fits the pattern more weakly and is kept.
+
+**05c genotype-count plots moved into 05b** (new last section, *Genotype counts
+by group*); 05c removed. Problems found in 05c along the way: its x axis,
+`contam`, is FALSE for all 125 samples in the sample-by-locus table (flagged
+samples are not in it), so every plot had one box per panel; the y label said
+"sites per 100 bp" but `geno_pct` is a percentage of called sites; only 2
+*jararaca* are from islands (vs 103 mainland), and only *jararaca* has more than
+2 males. The merged version plots all three metrics per figure, by species (split
+by land type) and by *jararaca* state (north to south), with points colored by
+batch and group sizes on the axis. The land-type-within-*jararaca* and by-sex
+plots were dropped; sex is covered by *Heterozygosity per sample*.
+
+**SC heterozygosity follows city, not batch.** Within *jararaca* in SC,
+heterozygosity splits into a low group (0.25-0.32%: Florianópolis, Fraiburgo,
+Capinzal; 6 of 7 samples from 605) and a high group (0.44-0.59%: mostly northern
+SC cities, also mostly 605). Florianópolis has one high sample, I12294 (705). The
+two island *jararaca* (I1767, I1768) are both Florianópolis and low. So the split
+inside one batch supports locality over batch for the state differences. The
+`locality` column is NA for all SC samples; `city` is filled in. Added to 05b as a
+by-city plot. Also in 05b: species labels italic (ggtext), title now "Locus and
+sample QC and genotype counts", and *Heterozygosity per sample* moved to directly
+before *Genotype counts by group*.
+
 ## 2026-09-12 -- Sequencing batch effect; two 05b outliers explained; locus length vs. depth
 
 **Rerun from 02b (ab_tol = 2, AB locus test in 04c): first checks.** 04c drops
